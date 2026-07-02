@@ -1,0 +1,67 @@
+{
+  "markets": [
+    {
+      "label": "Spain vs Saudi Arabia - Spain wins",
+      "kalshi_ticker": "KXWCGAME-26JUN21ESPKSA-ESP",
+      "polymarket_token_id": "73510205866448375978164321647457824822309414197359016110940718743916953674850",
+      "polymarket_condition_id": "0x2fcf3968f5feff8c544b1be614f1c7aed22f5051949478bc0b39f9e966cab02a",
+      "outcome": "yes"
+    },
+    {
+      "label": "Spain vs Saudi Arabia - Tie",
+      "kalshi_ticker": "KXWCGAME-26JUN21ESPKSA-TIE",
+      "polymarket_token_id": "82898292053233796019218455463083153847413990945759207495147091875359141826965",
+      "polymarket_condition_id": "0x55aa84891f31cedeaef953dfabbb56214ed9549f2ca3ddfe10d395bc58def557",
+      "outcome": "yes"
+    },
+    {
+      "label": "Spain vs Saudi Arabia - Saudi Arabia wins",
+      "kalshi_ticker": "KXWCGAME-26JUN21ESPKSA-KSA",
+      "polymarket_token_id": "34595222436901694034568466087145334098073564547697700427928775408006876228602",
+      "polymarket_condition_id": "0x3abd1b7cf1488504d51a36c1e3f944597dfe6e0545a6fd34ef3d4a3746f90e59",
+      "outcome": "yes"
+    },
+    {
+      "label": "Tunisia vs Japan - Tunisia wins",
+      "kalshi_ticker": "KXWCGAME-26JUN21TUNJPN-TUN",
+      "polymarket_token_id": "62516949205730668430138255140150438665483187962069999240136080804116109915287",
+      "polymarket_condition_id": "0x4c848328019296227bc205bb575cde555ed13f6fe5159e3f72636b4afd79dccd",
+      "outcome": "yes"
+    },
+    {
+      "label": "Tunisia vs Japan - Tie",
+      "kalshi_ticker": "KXWCGAME-26JUN21TUNJPN-TIE",
+      "polymarket_token_id": "50275383633644719253389412495747849486228904621414058936414415835809185820411",
+      "polymarket_condition_id": "0x264e6793ab225b8fd861f13934ee8a826a864116e1dd727b38a65e2f7cd3f67c",
+      "outcome": "yes"
+    },
+    {
+      "label": "Tunisia vs Japan - Japan wins",
+      "kalshi_ticker": "KXWCGAME-26JUN21TUNJPN-JPN",
+      "polymarket_token_id": "91234906493805354217250440222911012200186057450151286874925972448339630680686",
+      "polymarket_condition_id": "0x051e0ea5b3c394114eacf8ce5e944ca63cbb6ccdef1d086cadc5dd129a3804e6",
+      "outcome": "yes"
+    },
+    {
+      "label": "Belgium vs IR Iran - Belgium wins",
+      "kalshi_ticker": "KXWCGAME-26JUN21BELIRI-BEL",
+      "polymarket_token_id": "73247571006255574285385183553023235681702880602976519365262465179094676130340",
+      "polymarket_condition_id": "0xebb200cb08bbe89c2523a345947d083a992e27cc479cf1b5568407751e026d2c",
+      "outcome": "yes"
+    },
+    {
+      "label": "Belgium vs IR Iran - Tie",
+      "kalshi_ticker": "KXWCGAME-26JUN21BELIRI-TIE",
+      "polymarket_token_id": "65206879169809471684171181962606426355936771076631263853333189016369249957120",
+      "polymarket_condition_id": "0x11e878643f63c75e36d58024033ae710c19e696f652fa05ba705ab019402a633",
+      "outcome": "yes"
+    },
+    {
+      "label": "Belgium vs IR Iran - IR Iran wins",
+      "kalshi_ticker": "KXWCGAME-26JUN21BELIRI-IRI",
+      "polymarket_token_id": "107259278816298402654822103861927486042412499982187590917424237525323082866574",
+      "polymarket_condition_id": "0xc4a229b06046a4a30d9b5cd73fc6364f6b7cdc48efc33bfc6b24a2806aa93f30",
+      "outcome": "yes"
+    }
+  ]
+}

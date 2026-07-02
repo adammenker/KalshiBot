@@ -1,0 +1,76 @@
+{
+  "markets": [
+    {
+      "label": "Spain vs Saudi Arabia - Spain wins",
+      "kalshi_ticker": "KXWCGAME-26JUN21ESPKSA-ESP",
+      "polymarket_token_id": "73510205866448375978164321647457824822309414197359016110940718743916953674850",
+      "outcome": "yes"
+    },
+    {
+      "label": "Spain vs Saudi Arabia - Tie",
+      "kalshi_ticker": "KXWCGAME-26JUN21ESPKSA-TIE",
+      "polymarket_token_id": "82898292053233796019218455463083153847413990945759207495147091875359141826965",
+      "outcome": "yes"
+    },
+    {
+      "label": "Spain vs Saudi Arabia - Saudi Arabia wins",
+      "kalshi_ticker": "KXWCGAME-26JUN21ESPKSA-KSA",
+      "polymarket_token_id": "34595222436901694034568466087145334098073564547697700427928775408006876228602",
+      "outcome": "yes"
+    },
+    {
+      "label": "Tunisia vs Japan - Tunisia wins",
+      "kalshi_ticker": "KXWCGAME-26JUN21TUNJPN-TUN",
+      "polymarket_token_id": "62516949205730668430138255140150438665483187962069999240136080804116109915287",
+      "outcome": "yes"
+    },
+    {
+      "label": "Tunisia vs Japan - Tie",
+      "kalshi_ticker": "KXWCGAME-26JUN21TUNJPN-TIE",
+      "polymarket_token_id": "50275383633644719253389412495747849486228904621414058936414415835809185820411",
+      "outcome": "yes"
+    },
+    {
+      "label": "Tunisia vs Japan - Japan wins",
+      "kalshi_ticker": "KXWCGAME-26JUN21TUNJPN-JPN",
+      "polymarket_token_id": "91234906493805354217250440222911012200186057450151286874925972448339630680686",
+      "outcome": "yes"
+    },
+    {
+      "label": "Ecuador vs Curacao - Ecuador wins",
+      "kalshi_ticker": "KXWCGAME-26JUN20ECUCUW-ECU",
+      "polymarket_token_id": "7079595983448256774998692261246256964535880004732387005017898482275441988994",
+      "outcome": "yes"
+    },
+    {
+      "label": "Ecuador vs Curacao - Tie",
+      "kalshi_ticker": "KXWCGAME-26JUN20ECUCUW-TIE",
+      "polymarket_token_id": "76080209269268194960994324761022940023118517246399247746844169234710576675814",
+      "outcome": "yes"
+    },
+    {
+      "label": "Ecuador vs Curacao - Curacao wins",
+      "kalshi_ticker": "KXWCGAME-26JUN20ECUCUW-CUW",
+      "polymarket_token_id": "22922754856620040574706795332414925251832240378503831196222537952159137725220",
+      "outcome": "yes"
+    },
+    {
+      "label": "Belgium vs IR Iran - Belgium wins",
+      "kalshi_ticker": "KXWCGAME-26JUN21BELIRI-BEL",
+      "polymarket_token_id": "73247571006255574285385183553023235681702880602976519365262465179094676130340",
+      "outcome": "yes"
+    },
+    {
+      "label": "Belgium vs IR Iran - Tie",
+      "kalshi_ticker": "KXWCGAME-26JUN21BELIRI-TIE",
+      "polymarket_token_id": "65206879169809471684171181962606426355936771076631263853333189016369249957120",
+      "outcome": "yes"
+    },
+    {
+      "label": "Belgium vs IR Iran - IR Iran wins",
+      "kalshi_ticker": "KXWCGAME-26JUN21BELIRI-IRI",
+      "polymarket_token_id": "107259278816298402654822103861927486042412499982187590917424237525323082866574",
+      "outcome": "yes"
+    }
+  ]
+}

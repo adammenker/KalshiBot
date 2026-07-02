@@ -1,0 +1,244 @@
+[
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-04",
+      "price": "0.4600",
+      "ticker": "KXMLBGAME-26JUL041910BALCIN-BAL",
+      "title": "Baltimore vs Cincinnati Winner? | Baltimore",
+      "url": "https://kalshi.com/search?query=KXMLBGAME-26JUL041910BALCIN-BAL"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-04",
+      "price": "0.685",
+      "title": "Baltimore Orioles vs. Cincinnati Reds | Baltimore Orioles vs. Cincinnati Reds | Baltimore Orioles",
+      "token_id": "102923903333093658226406016861493282141849534221358172322431738760741856589307",
+      "url": "https://polymarket.com/event/mlb-bal-cin-2026-07-04"
+    },
+    "price_gap": "0.2250",
+    "price_reason": "midpoint difference 0.2250 exceeds threshold 0.03",
+    "price_status": "warning",
+    "side_mapping": "same"
+  },
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-04",
+      "price": "0.4600",
+      "ticker": "KXMLBGAME-26JUL041910BALCIN-CIN",
+      "title": "Baltimore vs Cincinnati Winner? | Cincinnati",
+      "url": "https://kalshi.com/search?query=KXMLBGAME-26JUL041910BALCIN-CIN"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-04",
+      "price": "0.315",
+      "title": "Baltimore Orioles vs. Cincinnati Reds | Baltimore Orioles vs. Cincinnati Reds | Cincinnati Reds",
+      "token_id": "45622053424272621325856787176165488752726511972300362230521765441220323332025",
+      "url": "https://polymarket.com/event/mlb-bal-cin-2026-07-04"
+    },
+    "price_gap": "0.1450",
+    "price_reason": "midpoint difference 0.1450 exceeds threshold 0.03",
+    "price_status": "warning",
+    "side_mapping": "same"
+  },
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-02",
+      "price": "0.6300",
+      "ticker": "KXITFMATCH-26JUL02HUDMAR-HUD",
+      "title": "Will Emile Hudd win the Hudd vs Marques: M25 Figueira da Foz Round of 16 match? | Emile Hudd",
+      "url": "https://kalshi.com/search?query=KXITFMATCH-26JUL02HUDMAR-HUD"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-02",
+      "price": "0.69",
+      "title": "ITF Figueira Da Foz: Emile Hudd vs Goncalo Marques | ITF Figueira Da Foz: Emile Hudd vs Goncalo Marques | Emile Hudd",
+      "token_id": "14277008766450085370816273269616025548201446738151029616977067003855489171003",
+      "url": "https://polymarket.com/event/itf-hudd-marque-2026-07-02"
+    },
+    "price_gap": "0.0600",
+    "price_reason": "midpoint difference 0.0600 exceeds threshold 0.03",
+    "price_status": "warning",
+    "side_mapping": "same"
+  },
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-02",
+      "price": "0.3200",
+      "ticker": "KXITFMATCH-26JUL02HUDMAR-MAR",
+      "title": "Will Goncalo Marques win the Hudd vs Marques: M25 Figueira da Foz Round of 16 match? | Goncalo Marques",
+      "url": "https://kalshi.com/search?query=KXITFMATCH-26JUL02HUDMAR-MAR"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-02",
+      "price": "0.31",
+      "title": "ITF Figueira Da Foz: Emile Hudd vs Goncalo Marques | ITF Figueira Da Foz: Emile Hudd vs Goncalo Marques | Goncalo Marques",
+      "token_id": "61002064602001237272303151661382082987160053061914880511800184931708977171735",
+      "url": "https://polymarket.com/event/itf-hudd-marque-2026-07-02"
+    },
+    "price_gap": "0.0100",
+    "price_reason": "midpoint difference within threshold",
+    "price_status": "passed",
+    "side_mapping": "same"
+  },
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-02",
+      "price": "0.3150",
+      "ticker": "KXITFMATCH-26JUL02GONTOR-GON",
+      "title": "Will Mario Gonzalez Fernandez win the Gonzalez Fernandez vs Torres: M25 Figueira da Foz Round of 16 match? | Mario Gonzalez Fernandez",
+      "url": "https://kalshi.com/search?query=KXITFMATCH-26JUL02GONTOR-GON"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-02",
+      "price": "0.265",
+      "title": "ITF Figueira Da Foz: Mario Gonzalez Fernandez vs Tiago Torres | ITF Figueira Da Foz: Mario Gonzalez Fernandez vs Tiago Torres | Mario Gonzalez Fernandez",
+      "token_id": "67088619922769489808752933578923628134257526219548343992425006767736085323962",
+      "url": "https://polymarket.com/event/itf-fer-torres-2026-07-02"
+    },
+    "price_gap": "0.0500",
+    "price_reason": "midpoint difference 0.0500 exceeds threshold 0.03",
+    "price_status": "warning",
+    "side_mapping": "same"
+  },
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-02",
+      "price": "0.4500",
+      "ticker": "KXITFMATCH-26JUL02GONTOR-TOR",
+      "title": "Will Tiago Torres win the Gonzalez Fernandez vs Torres: M25 Figueira da Foz Round of 16 match? | Tiago Torres",
+      "url": "https://kalshi.com/search?query=KXITFMATCH-26JUL02GONTOR-TOR"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-02",
+      "price": "0.735",
+      "title": "ITF Figueira Da Foz: Mario Gonzalez Fernandez vs Tiago Torres | ITF Figueira Da Foz: Mario Gonzalez Fernandez vs Tiago Torres | Tiago Torres",
+      "token_id": "54713725594026053927045907906672186903215230971989226781077385659296351147760",
+      "url": "https://polymarket.com/event/itf-fer-torres-2026-07-02"
+    },
+    "price_gap": "0.2850",
+    "price_reason": "midpoint difference 0.2850 exceeds threshold 0.03",
+    "price_status": "warning",
+    "side_mapping": "same"
+  },
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-02",
+      "price": "0.5650",
+      "ticker": "KXITFMATCH-26JUL02PERSCH-SCH",
+      "title": "Will Patrick Schoen win the Pereira vs Schoen: M25 Figueira da Foz Round of 16 match? | Patrick Schoen",
+      "url": "https://kalshi.com/search?query=KXITFMATCH-26JUL02PERSCH-SCH"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-02",
+      "price": "0.58",
+      "title": "ITF Figueira Da Foz: Tiago Pereira vs Patrick Schoen | ITF Figueira Da Foz: Tiago Pereira vs Patrick Schoen | Patrick Schoen",
+      "token_id": "6553904650443532654953575662021123558846495086461198474862994414475322058729",
+      "url": "https://polymarket.com/event/itf-pereir-schoen-2026-07-02"
+    },
+    "price_gap": "0.0150",
+    "price_reason": "midpoint difference within threshold",
+    "price_status": "passed",
+    "side_mapping": "same"
+  },
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-02",
+      "price": "0.4300",
+      "ticker": "KXITFMATCH-26JUL02PERSCH-PER",
+      "title": "Will Tiago Pereira win the Pereira vs Schoen: M25 Figueira da Foz Round of 16 match? | Tiago Pereira",
+      "url": "https://kalshi.com/search?query=KXITFMATCH-26JUL02PERSCH-PER"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-02",
+      "price": "0.42",
+      "title": "ITF Figueira Da Foz: Tiago Pereira vs Patrick Schoen | ITF Figueira Da Foz: Tiago Pereira vs Patrick Schoen | Tiago Pereira",
+      "token_id": "48474028496462705464677147206764532194471729519677694513162261477104627419118",
+      "url": "https://polymarket.com/event/itf-pereir-schoen-2026-07-02"
+    },
+    "price_gap": "0.0100",
+    "price_reason": "midpoint difference within threshold",
+    "price_status": "passed",
+    "side_mapping": "same"
+  },
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-02",
+      "price": "0.4550",
+      "ticker": "KXITFWMATCH-26JUL02STRTUB-STR",
+      "title": "Will Julie Struplova win the Struplova vs Tubello: W50 Stuttgart-Vaihingen Round of 16 match? | Julie Struplova",
+      "url": "https://kalshi.com/search?query=KXITFWMATCH-26JUL02STRTUB-STR"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-02",
+      "price": "0.465",
+      "title": "ITF Stuttgart-Vaihingen: Julie Struplova vs Alice Tubello | ITF Stuttgart-Vaihingen: Julie Struplova vs Alice Tubello | Julie Struplova",
+      "token_id": "17429817293128630198494137381061827508732803182717554629328787345518887834230",
+      "url": "https://polymarket.com/event/itf-struplo-tubello-2026-07-02"
+    },
+    "price_gap": "0.0100",
+    "price_reason": "midpoint difference within threshold",
+    "price_status": "passed",
+    "side_mapping": "same"
+  },
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-04",
+      "price": "0.6900",
+      "ticker": "KXMLBGAME-26JUL041910TBHOU-HOU",
+      "title": "Tampa Bay vs Houston Winner? | Houston",
+      "url": "https://kalshi.com/search?query=KXMLBGAME-26JUL041910TBHOU-HOU"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-04",
+      "price": "0.53",
+      "title": "Tampa Bay Rays vs. Houston Astros | Tampa Bay Rays vs. Houston Astros | Houston Astros",
+      "token_id": "91261191817251795266957084512350194635874155940614400511667709749870566742933",
+      "url": "https://polymarket.com/event/mlb-tb-hou-2026-07-04"
+    },
+    "price_gap": "0.1600",
+    "price_reason": "midpoint difference 0.1600 exceeds threshold 0.03",
+    "price_status": "warning",
+    "side_mapping": "same"
+  },
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-04",
+      "price": "0.5250",
+      "ticker": "KXMLBGAME-26JUL041910TBHOU-TB",
+      "title": "Tampa Bay vs Houston Winner? | Tampa Bay",
+      "url": "https://kalshi.com/search?query=KXMLBGAME-26JUL041910TBHOU-TB"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-04",
+      "price": "0.47",
+      "title": "Tampa Bay Rays vs. Houston Astros | Tampa Bay Rays vs. Houston Astros | Tampa Bay Rays",
+      "token_id": "86929937134660356334364916178776019438422237823144233453558740965645023672576",
+      "url": "https://polymarket.com/event/mlb-tb-hou-2026-07-04"
+    },
+    "price_gap": "0.0550",
+    "price_reason": "midpoint difference 0.0550 exceeds threshold 0.03",
+    "price_status": "warning",
+    "side_mapping": "same"
+  }
+]

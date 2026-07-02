@@ -1,0 +1,10 @@
+{
+  "markets": [
+    {
+      "label": "Example equivalent YES market",
+      "kalshi_ticker": "KXHIGHNY-26JUN20-T82",
+      "polymarket_token_id": "POLYMARKET_YES_CLOB_TOKEN_ID",
+      "outcome": "yes"
+    }
+  ]
+}

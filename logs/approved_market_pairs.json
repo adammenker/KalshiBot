@@ -1,0 +1,90 @@
+[
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-02",
+      "price": "0.3200",
+      "ticker": "KXITFMATCH-26JUL02HUDMAR-MAR",
+      "title": "Will Goncalo Marques win the Hudd vs Marques: M25 Figueira da Foz Round of 16 match? | Goncalo Marques",
+      "url": "https://kalshi.com/search?query=KXITFMATCH-26JUL02HUDMAR-MAR"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-02",
+      "price": "0.31",
+      "title": "ITF Figueira Da Foz: Emile Hudd vs Goncalo Marques | ITF Figueira Da Foz: Emile Hudd vs Goncalo Marques | Goncalo Marques",
+      "token_id": "61002064602001237272303151661382082987160053061914880511800184931708977171735",
+      "url": "https://polymarket.com/event/itf-hudd-marque-2026-07-02"
+    },
+    "price_gap": "0.0100",
+    "price_reason": "midpoint difference within threshold",
+    "price_status": "passed",
+    "side_mapping": "same"
+  },
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-02",
+      "price": "0.5650",
+      "ticker": "KXITFMATCH-26JUL02PERSCH-SCH",
+      "title": "Will Patrick Schoen win the Pereira vs Schoen: M25 Figueira da Foz Round of 16 match? | Patrick Schoen",
+      "url": "https://kalshi.com/search?query=KXITFMATCH-26JUL02PERSCH-SCH"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-02",
+      "price": "0.58",
+      "title": "ITF Figueira Da Foz: Tiago Pereira vs Patrick Schoen | ITF Figueira Da Foz: Tiago Pereira vs Patrick Schoen | Patrick Schoen",
+      "token_id": "6553904650443532654953575662021123558846495086461198474862994414475322058729",
+      "url": "https://polymarket.com/event/itf-pereir-schoen-2026-07-02"
+    },
+    "price_gap": "0.0150",
+    "price_reason": "midpoint difference within threshold",
+    "price_status": "passed",
+    "side_mapping": "same"
+  },
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-02",
+      "price": "0.4300",
+      "ticker": "KXITFMATCH-26JUL02PERSCH-PER",
+      "title": "Will Tiago Pereira win the Pereira vs Schoen: M25 Figueira da Foz Round of 16 match? | Tiago Pereira",
+      "url": "https://kalshi.com/search?query=KXITFMATCH-26JUL02PERSCH-PER"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-02",
+      "price": "0.42",
+      "title": "ITF Figueira Da Foz: Tiago Pereira vs Patrick Schoen | ITF Figueira Da Foz: Tiago Pereira vs Patrick Schoen | Tiago Pereira",
+      "token_id": "48474028496462705464677147206764532194471729519677694513162261477104627419118",
+      "url": "https://polymarket.com/event/itf-pereir-schoen-2026-07-02"
+    },
+    "price_gap": "0.0100",
+    "price_reason": "midpoint difference within threshold",
+    "price_status": "passed",
+    "side_mapping": "same"
+  },
+  {
+    "confidence": 0.92,
+    "kalshi": {
+      "date": "2026-07-02",
+      "price": "0.4550",
+      "ticker": "KXITFWMATCH-26JUL02STRTUB-STR",
+      "title": "Will Julie Struplova win the Struplova vs Tubello: W50 Stuttgart-Vaihingen Round of 16 match? | Julie Struplova",
+      "url": "https://kalshi.com/search?query=KXITFWMATCH-26JUL02STRTUB-STR"
+    },
+    "method": "structural_game_winner",
+    "polymarket": {
+      "date": "2026-07-02",
+      "price": "0.465",
+      "title": "ITF Stuttgart-Vaihingen: Julie Struplova vs Alice Tubello | ITF Stuttgart-Vaihingen: Julie Struplova vs Alice Tubello | Julie Struplova",
+      "token_id": "17429817293128630198494137381061827508732803182717554629328787345518887834230",
+      "url": "https://polymarket.com/event/itf-struplo-tubello-2026-07-02"
+    },
+    "price_gap": "0.0100",
+    "price_reason": "midpoint difference within threshold",
+    "price_status": "passed",
+    "side_mapping": "same"
+  }
+]
