@@ -42,7 +42,7 @@ def crypto_threshold_queries(market: NormalizedMarket) -> list[str]:
 
 def game_winner_queries(market: NormalizedMarket) -> list[str]:
     queries = []
-    matchup = matchup_query_from_text(" ".join(part for part in (market.title, market.question) if part))
+    matchup = matchup_query_from_text(" ".join(unique_text_parts(market.title, market.question)))
     if matchup:
         queries.append(matchup)
         queries.append(f"{matchup} winner")
@@ -54,16 +54,56 @@ def game_winner_queries(market: NormalizedMarket) -> list[str]:
     return queries
 
 
+def unique_text_parts(*parts: str | None) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        cleaned = " ".join(str(part or "").split())
+        key = cleaned.lower()
+        if not cleaned or key in seen:
+            continue
+        seen.add(key)
+        unique.append(cleaned)
+    return unique
+
+
 def matchup_query_from_text(text: str) -> str | None:
-    cleaned = re.sub(r"\bwill\s+.+?\s+win\s+(?:the\s+)?", "", text, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\b(?:winner|match|game)\??\b", "", cleaned, flags=re.IGNORECASE)
-    if ":" in cleaned:
-        cleaned = cleaned.split(":")[-1]
-    match = re.search(r"([A-Za-z0-9 .'-]+?)\s+vs\.?\s+([A-Za-z0-9 .'-]+)", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\bwill\s+.+?\s+win\s+"
+        r"(?:(?:map|set)\s+\d+\s+in\s+)?"
+        r"(?:the\s+)?",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    match = re.search(
+        r"(?P<left>[A-Za-z0-9 .'-]+?)\s+vs\.?\s+"
+        r"(?P<right>[A-Za-z0-9 .'-]+?)"
+        r"(?=\s*(?:[:?]|\s+-\s+|\s+\|\s+|\s+(?:match|game|winner|by)\b|$))",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
     if match is None:
         return None
-    left, right = match.groups()
+    left = clean_matchup_side(match.group("left"), is_left=True)
+    right = clean_matchup_side(match.group("right"), is_left=False)
+    if not left or not right:
+        return None
     return " ".join(f"{left} {right}".replace("|", " ").split())
+
+
+def clean_matchup_side(value: str, *, is_left: bool) -> str:
+    cleaned = value.strip()
+    if is_left and ":" in cleaned:
+        cleaned = cleaned.rsplit(":", 1)[-1]
+    cleaned = re.split(r"\s+\|\s+|\s+-\s+|\(|\?|:", cleaned)[0]
+    cleaned = re.sub(
+        r"\b(?:match|game|winner|final|semifinal|quarterfinal)\b.*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return " ".join(cleaned.split())
 
 
 def generic_queries(market: NormalizedMarket) -> list[str]:

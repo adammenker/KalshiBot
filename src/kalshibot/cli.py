@@ -29,6 +29,7 @@ from kalshibot.commands.polymarket import (
     run_poly_market,
     run_poly_price,
 )
+from kalshibot.commands.runtime import add_runtime_parsers, run_dynamic_bot
 from kalshibot.commands.trading import (
     add_trading_parsers,
     build_spread_pairs,
@@ -61,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_polymarket_parsers(subparsers)
     add_discovery_parsers(subparsers)
     add_trading_parsers(subparsers)
+    add_runtime_parsers(subparsers)
     add_history_parsers(subparsers)
     return parser
 
@@ -191,9 +193,15 @@ def main(argv: list[str] | None = None) -> int:
                 args.heartbeat_output,
                 args.scheduler,
                 args.metadata_refresh_seconds,
+                args.strategy_mode,
+                args.strategy_variants,
+                args.strategy_paper_trades,
+                args.strategy_config,
             )
+        if args.command == "run-bot":
+            return run_dynamic_bot(args)
         if args.command == "analyze":
-            return run_analyze(args.db, args.market_limit)
+            return run_analyze(args.db, args.market_limit, args.strategy_signal_limit)
         if args.command == "backfill-history":
             return run_backfill_history(
                 pairs_path=args.pairs,

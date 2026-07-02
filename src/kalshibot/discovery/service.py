@@ -20,6 +20,7 @@ from kalshibot.discovery.flow import (
     price_validation_summary,
 )
 from kalshibot.discovery.models import DiscoveryMatch
+from kalshibot.discovery.models import KalshiDiscoveryMarket
 from kalshibot.discovery.sizing import (
     DEFAULT_KALSHI_SIZE_SORT,
     normalize_kalshi_size_sort,
@@ -78,17 +79,22 @@ def discover_market_matches(
     kalshi_size_sort_by: str = DEFAULT_KALSHI_SIZE_SORT,
     min_match_date: str | None = None,
     max_match_date: str | None = None,
+    seed_kalshi_markets: list[KalshiDiscoveryMarket] | None = None,
 ) -> dict[str, Any]:
     effective_kalshi_fetch_limit = kalshi_fetch_limit or kalshi_limit
     normalized_kalshi_size_sort = normalize_kalshi_size_sort(kalshi_size_sort_by)
-    kalshi_markets = list_kalshi_discovery_markets(
-        kalshi_client,
-        limit=effective_kalshi_fetch_limit,
-        pages=kalshi_pages,
-        status=kalshi_status,
-        series_ticker=kalshi_series_ticker,
-        include_series=kalshi_include_series,
-        exclude_series=kalshi_exclude_series,
+    kalshi_markets = (
+        list(seed_kalshi_markets)
+        if seed_kalshi_markets is not None
+        else list_kalshi_discovery_markets(
+            kalshi_client,
+            limit=effective_kalshi_fetch_limit,
+            pages=kalshi_pages,
+            status=kalshi_status,
+            series_ticker=kalshi_series_ticker,
+            include_series=kalshi_include_series,
+            exclude_series=kalshi_exclude_series,
+        )
     )
     fetched_kalshi_markets = len(kalshi_markets)
     if kalshi_market_types:

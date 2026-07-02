@@ -49,11 +49,12 @@ def test_parse_market_type_set_preserves_lowercase_type_names() -> None:
     }
 
 
-def test_discover_matches_parser_defaults_to_small_kalshi_sample() -> None:
+def test_discover_matches_parser_defaults_to_daily_discovery_sample() -> None:
     args = build_parser().parse_args(["discover-matches"])
 
-    assert args.kalshi_limit == 5
-    assert args.kalshi_fetch_limit == 100
+    assert args.kalshi_limit == 25
+    assert args.kalshi_fetch_limit == 500
+    assert args.kalshi_pages == 5
     assert args.kalshi_sort_by == "volume-24h"
     assert args.market_profile == "win-lose"
     assert args.max_candidates_per_polymarket == 3
@@ -1990,6 +1991,74 @@ def test_structural_validation_rejects_map_contract_against_full_match() -> None
     assert "match_scope_mismatch" in validation.reasons
 
 
+def test_structural_validation_rejects_first_half_winner_against_full_game() -> None:
+    validation = validate_candidate_structure(
+        KalshiDiscoveryMarket(
+            ticker="KXWNBA1HWINNER-26JUL02DALCONN-DAL",
+            event_ticker="KXWNBA1HWINNER-26JUL02DALCONN",
+            title="Dallas vs Connecticut: First Half Winner?",
+            yes_sub_title="Dallas wins 1st half",
+            no_sub_title="Connecticut wins 1st half",
+            close_time="2026-07-17T00:00:00Z",
+            expected_expiration_time="2026-07-03T03:00:00Z",
+            full_title="Dallas vs Connecticut: First Half Winner? | Dallas wins 1st half",
+        ),
+        PolymarketDiscoveryMarket(
+            event_title="Dallas Wings vs. Connecticut Sun",
+            market_question="Dallas Wings vs. Connecticut Sun",
+            outcome="Dallas Wings",
+            token_id="token-dallas",
+            condition_id="0xwnba",
+            title=(
+                "Dallas Wings vs. Connecticut Sun | Dallas Wings vs. "
+                "Connecticut Sun | Dallas Wings"
+            ),
+            slug="wnba-dal-conn-2026-07-02",
+            end_date="2026-07-03T03:00:00Z",
+        ),
+    )
+
+    assert validation.passed is False
+    assert "match_scope_mismatch" in validation.reasons
+
+
+def test_structural_validation_rejects_exact_set_score_against_match_winner() -> None:
+    validation = validate_candidate_structure(
+        KalshiDiscoveryMarket(
+            ticker="KXATPEXACTMATCH-26JUL04TIABUB-TIA32",
+            event_ticker="KXATPEXACTMATCH-26JUL04TIABUB",
+            title=(
+                "Will Frances Tiafoe win the Frances Tiafoe vs Alexander Bublik match "
+                "by a set score of 3-2?"
+            ),
+            yes_sub_title="Frances Tiafoe wins 3-2",
+            no_sub_title=None,
+            close_time="2026-07-18T10:00:00Z",
+            expected_expiration_time="2026-07-04T13:00:00Z",
+            full_title=(
+                "Will Frances Tiafoe win the Frances Tiafoe vs Alexander Bublik match "
+                "by a set score of 3-2? | Frances Tiafoe wins 3-2"
+            ),
+        ),
+        PolymarketDiscoveryMarket(
+            event_title="Wimbledon ATP: Frances Tiafoe vs Alexander Bublik",
+            market_question="Wimbledon ATP: Frances Tiafoe vs Alexander Bublik",
+            outcome="Frances Tiafoe",
+            token_id="token-tiafoe",
+            condition_id="0xtennis",
+            title=(
+                "Wimbledon ATP: Frances Tiafoe vs Alexander Bublik | Wimbledon ATP: "
+                "Frances Tiafoe vs Alexander Bublik | Frances Tiafoe"
+            ),
+            slug="atp-tiafoe-bublik-2026-07-04",
+            end_date="2026-07-04T15:00:00Z",
+        ),
+    )
+
+    assert validation.passed is False
+    assert "match_scope_mismatch" in validation.reasons
+
+
 def test_game_winner_query_generation_uses_matchup_phrase() -> None:
     market = KalshiDiscoveryMarket(
         ticker="KXCODGAME-26JUN28LATOPT-OPT",
@@ -2007,6 +2076,27 @@ def test_game_winner_query_generation_uses_matchup_phrase() -> None:
     assert kalshi_polymarket_search_queries(market)[:2] == [
         "Los Angeles Thieves OpTic Texas",
         "Los Angeles Thieves OpTic Texas winner",
+    ]
+
+
+def test_game_winner_query_generation_keeps_matchup_before_colon_scope() -> None:
+    market = KalshiDiscoveryMarket(
+        ticker="KXWTAMATCH-26JUL04CIRNOS-NOS",
+        event_ticker="KXWTAMATCH-26JUL04CIRNOS",
+        title="Will Linda Noskova win the Cirstea vs Noskova: Round Of 32 match?",
+        yes_sub_title="Linda Noskova",
+        no_sub_title="Sorana Cirstea",
+        close_time="2026-07-18T10:00:00Z",
+        full_title=(
+            "Will Linda Noskova win the Cirstea vs Noskova: Round Of 32 match? | "
+            "Linda Noskova"
+        ),
+    )
+
+    assert kalshi_polymarket_search_queries(market)[:3] == [
+        "Cirstea Noskova",
+        "Cirstea Noskova winner",
+        "Cirstea Noskova 2026-07-18",
     ]
 
 

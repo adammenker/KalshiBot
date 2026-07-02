@@ -3,10 +3,24 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from kalshibot.runtime.active_pairs import create_active_market_pairs_table
+
+
+def connect_database(path: Path, *, check_same_thread: bool = True) -> sqlite3.Connection:
+    connection = sqlite3.connect(
+        path,
+        timeout=30,
+        check_same_thread=check_same_thread,
+    )
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA busy_timeout = 5000")
+    connection.execute("PRAGMA synchronous = NORMAL")
+    return connection
+
 
 def initialize_database(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
+    with connect_database(path) as connection:
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute(
             """
@@ -118,50 +132,8 @@ def initialize_database(path: Path) -> None:
             )
             """
         )
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS paper_trades (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                signal_id INTEGER NOT NULL,
-                observation_id INTEGER NOT NULL,
-                run_id TEXT NOT NULL,
-                opened_at TEXT NOT NULL,
-                closed_at TEXT,
-                status TEXT NOT NULL,
-                label TEXT NOT NULL,
-                outcome TEXT NOT NULL,
-                kalshi_ticker TEXT NOT NULL,
-                polymarket_token_id TEXT NOT NULL,
-                simulated_entry_venue TEXT NOT NULL,
-                entry_price TEXT NOT NULL,
-                entry_comparison_price TEXT NOT NULL,
-                entry_edge TEXT NOT NULL,
-                entry_fair_price TEXT,
-                entry_hold_to_resolution_ev TEXT,
-                quantity TEXT NOT NULL,
-                entry_fee TEXT,
-                fee_mode TEXT,
-                fee_adjustment TEXT,
-                latest_observation_id INTEGER NOT NULL,
-                latest_marked_at TEXT NOT NULL,
-                latest_mark_price TEXT,
-                latest_exit_fee TEXT,
-                latest_gross_unrealized_pnl TEXT,
-                latest_unrealized_pnl TEXT,
-                latest_fair_price TEXT,
-                latest_hold_to_resolution_ev TEXT,
-                latest_edge TEXT NOT NULL,
-                best_unrealized_pnl TEXT,
-                worst_unrealized_pnl TEXT,
-                best_hold_to_resolution_ev TEXT,
-                worst_hold_to_resolution_ev TEXT,
-                observation_count INTEGER NOT NULL,
-                FOREIGN KEY(signal_id) REFERENCES paper_signals(id),
-                FOREIGN KEY(observation_id) REFERENCES observations(id),
-                FOREIGN KEY(latest_observation_id) REFERENCES observations(id)
-            )
-            """
-        )
+        create_paper_trades_table(connection)
+        ensure_paper_trades_signal_id_nullable(connection)
         ensure_column(connection, "paper_trades", "exit_observation_id", "INTEGER")
         ensure_column(connection, "paper_trades", "exit_price", "TEXT")
         ensure_column(connection, "paper_trades", "entry_fair_price", "TEXT")
@@ -179,6 +151,14 @@ def initialize_database(path: Path) -> None:
         ensure_column(connection, "paper_trades", "realized_gross_pnl", "TEXT")
         ensure_column(connection, "paper_trades", "realized_pnl", "TEXT")
         ensure_column(connection, "paper_trades", "close_reason", "TEXT")
+        ensure_column(connection, "paper_trades", "strategy_id", "TEXT")
+        ensure_column(connection, "paper_trades", "strategy_version", "TEXT")
+        ensure_column(connection, "paper_trades", "strategy_signal_id", "INTEGER")
+        ensure_column(connection, "paper_trades", "fair_value_provider", "TEXT")
+        ensure_column(connection, "paper_trades", "entry_policy", "TEXT")
+        ensure_column(connection, "paper_trades", "exit_policy", "TEXT")
+        ensure_column(connection, "paper_trades", "side", "TEXT")
+        ensure_column(connection, "paper_trades", "direction", "TEXT")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS paper_trade_marks (
@@ -207,6 +187,181 @@ def initialize_database(path: Path) -> None:
         ensure_column(connection, "paper_trade_marks", "exit_fee", "TEXT")
         ensure_column(connection, "paper_trade_marks", "fair_price", "TEXT")
         ensure_column(connection, "paper_trade_marks", "hold_to_resolution_ev", "TEXT")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS strategy_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                observation_id INTEGER NOT NULL,
+                run_id TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                strategy_id TEXT NOT NULL,
+                strategy_version TEXT NOT NULL,
+                signal_type TEXT NOT NULL,
+                label TEXT,
+                outcome TEXT,
+                kalshi_ticker TEXT NOT NULL,
+                polymarket_token_id TEXT NOT NULL,
+                polymarket_condition_id TEXT,
+                side TEXT,
+                direction TEXT,
+                score TEXT,
+                confidence TEXT,
+                fair_value TEXT,
+                entry_price TEXT,
+                mark_price TEXT,
+                edge TEXT,
+                fee_adjusted_edge TEXT,
+                kalshi_buy_price TEXT,
+                kalshi_sell_price TEXT,
+                polymarket_buy_price TEXT,
+                polymarket_mid_price TEXT,
+                kalshi_mid_price TEXT,
+                polymarket_mid_minus_kalshi_mid TEXT,
+                polymarket_mid_delta TEXT,
+                kalshi_mid_delta TEXT,
+                polymarket_open_interest TEXT,
+                polymarket_open_interest_delta TEXT,
+                polymarket_volume TEXT,
+                polymarket_volume_delta TEXT,
+                reasons_json TEXT NOT NULL,
+                rejection_reasons_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(observation_id) REFERENCES observations(id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_strategy_signals_observation_id
+            ON strategy_signals(observation_id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_strategy_signals_strategy_id
+            ON strategy_signals(strategy_id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_observations_condition_id_id
+            ON observations(polymarket_condition_id, id DESC)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_observations_market_observed_at_id
+            ON observations(kalshi_ticker, polymarket_token_id, observed_at DESC, id DESC)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_observations_market_outcome_id
+            ON observations(kalshi_ticker, polymarket_token_id, outcome, id DESC)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_paper_trades_open_market
+            ON paper_trades(status, label, outcome, kalshi_ticker, polymarket_token_id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_paper_trades_strategy_id
+            ON paper_trades(strategy_id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_paper_trades_strategy_signal_id
+            ON paper_trades(strategy_signal_id)
+            """
+        )
+        create_active_market_pairs_table(connection)
+
+
+def create_paper_trades_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS paper_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_id INTEGER,
+            strategy_signal_id INTEGER,
+            strategy_id TEXT,
+            strategy_version TEXT,
+            fair_value_provider TEXT,
+            entry_policy TEXT,
+            exit_policy TEXT,
+            side TEXT,
+            direction TEXT,
+            observation_id INTEGER NOT NULL,
+            run_id TEXT NOT NULL,
+            opened_at TEXT NOT NULL,
+            closed_at TEXT,
+            status TEXT NOT NULL,
+            label TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            kalshi_ticker TEXT NOT NULL,
+            polymarket_token_id TEXT NOT NULL,
+            simulated_entry_venue TEXT NOT NULL,
+            entry_price TEXT NOT NULL,
+            entry_comparison_price TEXT NOT NULL,
+            entry_edge TEXT NOT NULL,
+            entry_fair_price TEXT,
+            entry_hold_to_resolution_ev TEXT,
+            quantity TEXT NOT NULL,
+            entry_fee TEXT,
+            fee_mode TEXT,
+            fee_adjustment TEXT,
+            latest_observation_id INTEGER NOT NULL,
+            latest_marked_at TEXT NOT NULL,
+            latest_mark_price TEXT,
+            latest_exit_fee TEXT,
+            latest_gross_unrealized_pnl TEXT,
+            latest_unrealized_pnl TEXT,
+            latest_fair_price TEXT,
+            latest_hold_to_resolution_ev TEXT,
+            latest_edge TEXT NOT NULL,
+            best_unrealized_pnl TEXT,
+            worst_unrealized_pnl TEXT,
+            best_hold_to_resolution_ev TEXT,
+            worst_hold_to_resolution_ev TEXT,
+            observation_count INTEGER NOT NULL,
+            exit_observation_id INTEGER,
+            exit_price TEXT,
+            exit_fee TEXT,
+            realized_gross_pnl TEXT,
+            realized_pnl TEXT,
+            close_reason TEXT,
+            FOREIGN KEY(signal_id) REFERENCES paper_signals(id),
+            FOREIGN KEY(strategy_signal_id) REFERENCES strategy_signals(id),
+            FOREIGN KEY(observation_id) REFERENCES observations(id),
+            FOREIGN KEY(latest_observation_id) REFERENCES observations(id)
+        )
+        """
+    )
+
+
+def ensure_paper_trades_signal_id_nullable(connection: sqlite3.Connection) -> None:
+    columns = connection.execute("PRAGMA table_info(paper_trades)").fetchall()
+    signal_id = next((column for column in columns if column[1] == "signal_id"), None)
+    if signal_id is None or signal_id[3] == 0:
+        return
+
+    connection.execute("ALTER TABLE paper_trades RENAME TO paper_trades_old")
+    create_paper_trades_table(connection)
+    old_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(paper_trades_old)").fetchall()
+    }
+    new_columns = {row[1] for row in connection.execute("PRAGMA table_info(paper_trades)").fetchall()}
+    shared_columns = sorted(old_columns & new_columns)
+    column_list = ", ".join(shared_columns)
+    connection.execute(
+        f"INSERT INTO paper_trades ({column_list}) SELECT {column_list} FROM paper_trades_old"
+    )
+    connection.execute("DROP TABLE paper_trades_old")
 
 
 def ensure_column(

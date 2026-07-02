@@ -82,11 +82,10 @@ pip install -e '.[discovery]'
 ```
 
 ```bash
-kalshibot discover-matches \
-  --kalshi-limit 5
+kalshibot discover-matches
 ```
 
-By default, discovery uses Polymarket's `public-search` endpoint with multiple generated queries per Kalshi market, not just the raw Kalshi title. The CLI defaults to the project's current `--market-profile win-lose`, `--strategy polymarket-search`, `--kalshi-limit 5`, `--kalshi-sort-by volume-24h`, `--review-output logs/discovery_matches.json`, and `--pairs-output config/approved_market_pairs.json`. Use `--market-profile sports-game-winner`, `--market-profile crypto-threshold`, `--market-profile event-winner`, `--market-profile economic-release`, or `--market-profile general` for targeted passes.
+By default, discovery uses Polymarket's `public-search` endpoint with multiple generated queries per Kalshi market, not just the raw Kalshi title. The CLI defaults to the project's current `--market-profile win-lose`, `--strategy polymarket-search`, `--kalshi-fetch-limit 500`, `--kalshi-pages 5`, `--kalshi-limit 25`, `--kalshi-sort-by volume-24h`, `--review-output logs/discovery_matches.json`, and `--pairs-output config/approved_market_pairs.json`. For a quick smoke test, add `--kalshi-fetch-limit 100 --kalshi-pages 1 --kalshi-limit 5`. Use `--market-profile sports-game-winner`, `--market-profile crypto-threshold`, `--market-profile event-winner`, `--market-profile economic-release`, or `--market-profile general` for targeted passes.
 
 Discovery separates equivalence from signal. Price validation defaults to `--price-validation-mode warn`, so Kalshi/Polymarket price gaps are recorded as diagnostics instead of hard-rejecting otherwise equivalent contracts. Use `--price-validation-mode reject` only for a special sanity-check run. The hard blockers are structural: threshold mismatch, date/deadline mismatch, comparator mismatch, entity mismatch, side ambiguity, materially different settlement timing/source, and similar contract-rule differences.
 
@@ -175,6 +174,50 @@ Performance knobs:
 - `--scheduler fixed-rate|sleep-after-batch|per-market`: `fixed-rate` starts each batch on the requested cadence when possible, `sleep-after-batch` preserves the old loop behavior, and `per-market` gives each market its own independent cadence.
 - `--metadata-refresh-seconds N`: orderbooks refresh every tick, while Polymarket Gamma/Data metadata such as volume/OI refreshes every `N` seconds. Use `0` to fetch metadata every tick.
 
+## Dynamic Live Bot
+
+For live sports, use `run-bot` instead of manually running discovery once and then heartbeat. It scans Kalshi sports milestones, confirms live/in-progress games with Kalshi live-data, discovers matching Polymarket markets, stores approved pairs in SQLite, and heartbeats the active pair registry. Closed or repeatedly failing pairs are marked inactive; historical observations and paper trades stay in the database.
+
+```bash
+kalshibot run-bot \
+  --runtime-minutes 60 \
+  --heartbeat-interval-ms 250 \
+  --discovery-interval-seconds 900 \
+  --strategy-mode scout
+```
+
+Useful outputs:
+
+- `config/live_active_market_pairs.json`: current active watchlist snapshot.
+- `data/live_discovered_market_matches.json`: latest live discovery result.
+- `logs/live_discovery.jsonl`: compact discovery-cycle summaries.
+- `data/observations.sqlite`: observations, paper trades, strategy signals, and active-pair state.
+
+Use `--clear-active-on-start` when you want a fresh active watchlist without deleting historical observations. Use `--seed-pairs config/approved_market_pairs.json` to start heartbeat immediately from known pairs while live discovery keeps adding new ones.
+
+Optional strategy variants can run after each observation is saved. Scout mode enables the built-in learning variants and records permissive shadow signals without changing the old heartbeat paper-trade path:
+
+```bash
+kalshibot heartbeat \
+  --iterations 0 \
+  --interval-ms 250 \
+  --strategy-mode scout
+```
+
+Strategy variants write rows to `strategy_signals`. The heartbeat summary includes `strategy_signal_count` and `strategy_paper_trade_count` alongside the legacy `signal_count`. A `shadow` strategy signal is for learning only; a `paper_open` strategy signal can open a strategy-specific paper trade when that variant is allowlisted with `--strategy-paper-trades`.
+
+To let selected variants open their own strategy-specific paper trades, add `--strategy-paper-trades`. Those IDs are automatically enabled for strategy signal logging too:
+
+```bash
+kalshibot heartbeat \
+  --iterations 0 \
+  --interval-ms 250 \
+  --strategy-mode scout \
+  --strategy-paper-trades hold_to_resolution_ev_poly_mid
+```
+
+Built-in variants are `legacy_fee_adjusted_edge`, `loose_poly_lead_scout`, `persistent_mid_gap`, `hold_to_resolution_ev_poly_mid`, and `hold_to_resolution_ev_poly_bid_conservative`. Strategy paper trades are stored in the same `paper_trades` table with `strategy_id`, `strategy_version`, `strategy_signal_id`, side/direction, fair-value provider, and policy metadata. Different variants can hold separate paper trades on the same market, while the same variant will not duplicate an already-open trade for the same market/direction. Optional per-variant JSON config can be passed with `--strategy-config`.
+
 Fast live-game EV-style run:
 
 ```bash
@@ -236,14 +279,17 @@ The SQLite tables are:
 
 - `observations`: every heartbeat comparison.
 - `paper_signals`: raw signal rows created from observations that passed the filters.
-- `paper_trades`: paper trade lifecycle state, including close reason, exit price, realized PnL when a trade is closed, and latest hold-to-resolution EV.
+- `paper_trades`: paper trade lifecycle state, including strategy metadata when applicable, close reason, exit price, realized PnL when a trade is closed, and latest hold-to-resolution EV.
 - `paper_trade_marks`: mark-to-market and hold-to-resolution EV history for open paper trades.
+- `strategy_signals`: optional shadow strategy decisions keyed by `strategy_id` and observation.
 
 Summarize the recorded observations:
 
 ```bash
-kalshibot analyze --db data/observations.sqlite
+kalshibot analyze --db data/observations.sqlite --strategy-signal-limit 20
 ```
+
+When strategies are enabled, `analyze` includes a `strategy_signals` block with total signal count, signal rate, counts by signal type, reason/rejection counts, per-strategy edge summaries, and recent strategy signals with reasons and metadata. The `paper_trades.by_strategy` block breaks paper-trade PnL out by `strategy_id`, with legacy heartbeat trades grouped under `strategy_id: null`.
 
 The analysis report includes observation counts, paper signal counts, paper trade counts/PnL, edge stats, Polymarket OI stats, latency/skew stats, which venue responded first, filter reason counts, and per-market summaries.
 

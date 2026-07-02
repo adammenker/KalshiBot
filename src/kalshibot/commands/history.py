@@ -35,6 +35,12 @@ def add_history_parsers(subparsers: Any) -> None:
         default=20,
         help="Maximum per-market summaries to include",
     )
+    analyze.add_argument(
+        "--strategy-signal-limit",
+        type=int,
+        default=20,
+        help="Maximum recent strategy signals to include",
+    )
 
     backfill = subparsers.add_parser(
         "backfill-history",
@@ -96,10 +102,22 @@ def add_history_parsers(subparsers: Any) -> None:
     )
 
 
-def run_analyze(db_path: Path, market_limit: int) -> int:
+def run_analyze(db_path: Path, market_limit: int, strategy_signal_limit: int = 20) -> int:
     if market_limit < 1:
         raise ValueError("--market-limit must be at least 1")
-    print(json.dumps(analyze_database(db_path, market_limit=market_limit), indent=2, sort_keys=True))
+    if strategy_signal_limit < 0:
+        raise ValueError("--strategy-signal-limit cannot be negative")
+    print(
+        json.dumps(
+            analyze_database(
+                db_path,
+                market_limit=market_limit,
+                strategy_signal_limit=strategy_signal_limit,
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 

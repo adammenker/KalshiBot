@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 import json
 from pathlib import Path
+import sqlite3
 from time import perf_counter
 from typing import Literal
 from uuid import uuid4
@@ -30,11 +31,23 @@ from kalshibot.defaults import (
 from kalshibot.monitoring.fetch import check_spread_concurrently
 from kalshibot.monitoring.formatting import format_timed_spread_check
 from kalshibot.monitoring.models import TimedSpreadCheck
-from kalshibot.monitoring.observations import ObservationSaveResult, save_observations
-from kalshibot.paper import PaperExitConfig
+from kalshibot.monitoring.observations import (
+    ObservationSaveResult,
+    save_observations_on_connection,
+)
+from kalshibot.paper import (
+    PaperExitConfig,
+    append_paper_trade_events,
+    write_paper_pnl_snapshot,
+)
 from kalshibot.polymarket import PolymarketClient
 from kalshibot.spreads import DEFAULT_FEE_MODE, FeeMode, MarketPair, load_market_pairs
-from kalshibot.storage import initialize_database
+from kalshibot.storage import connect_database, initialize_database
+from kalshibot.strategies import (
+    StrategyEngineConfig,
+    StrategyRecordingResult,
+    record_strategy_signals_on_connection,
+)
 from kalshibot.utils import optional_decimal, utc_now_iso
 
 HeartbeatOutputMode = Literal["quiet", "summary", "full"]
@@ -52,6 +65,12 @@ class CachedPairMetadata:
     open_interest: Decimal | None = None
     volume: Decimal | None = None
     refreshed_at: float | None = None
+
+
+@dataclass(frozen=True)
+class HeartbeatPersistenceResult:
+    save_results: list[ObservationSaveResult]
+    strategy_recording: StrategyRecordingResult
 
 
 async def run_heartbeat_async(
@@ -80,6 +99,7 @@ async def run_heartbeat_async(
     heartbeat_output: HeartbeatOutputMode = "summary",
     scheduler: HeartbeatScheduler = "fixed-rate",
     metadata_refresh_seconds: Decimal = Decimal("5"),
+    strategy_config: StrategyEngineConfig | None = None,
 ) -> int:
     if scheduler == "per-market":
         return await run_per_market_heartbeat_async(
@@ -106,6 +126,7 @@ async def run_heartbeat_async(
             paper_pnl_log_path=paper_pnl_log_path,
             heartbeat_output=heartbeat_output,
             metadata_refresh_seconds=metadata_refresh_seconds,
+            strategy_config=strategy_config,
         )
 
     return await run_batch_heartbeat_async(
@@ -133,6 +154,7 @@ async def run_heartbeat_async(
         heartbeat_output=heartbeat_output,
         scheduler=scheduler,
         metadata_refresh_seconds=metadata_refresh_seconds,
+        strategy_config=strategy_config,
     )
 
 
@@ -162,121 +184,130 @@ async def run_batch_heartbeat_async(
     heartbeat_output: HeartbeatOutputMode,
     scheduler: HeartbeatScheduler,
     metadata_refresh_seconds: Decimal,
+    strategy_config: StrategyEngineConfig | None,
 ) -> int:
     active_pairs = load_market_pairs(pairs_path)
     consecutive_failures: dict[str, int] = {}
     metadata_cache: dict[str, CachedPairMetadata] = {}
     initialize_database(db_path)
+    db_connection = connect_database(db_path, check_same_thread=False)
     kalshi_client = KalshiClient(load_config())
     polymarket_client = PolymarketClient(load_polymarket_config())
 
     iteration = 0
     interval = float(interval_seconds)
     next_start = perf_counter()
-    while iterations == 0 or iteration < iterations:
-        if scheduler == "fixed-rate":
-            sleep_for = next_start - perf_counter()
-            if sleep_for > 0:
-                await asyncio.sleep(sleep_for)
-            next_start += interval
+    try:
+        while iterations == 0 or iteration < iterations:
+            if scheduler == "fixed-rate":
+                sleep_for = next_start - perf_counter()
+                if sleep_for > 0:
+                    await asyncio.sleep(sleep_for)
+                next_start += interval
 
-        run_id = str(uuid4())
-        if not active_pairs:
-            emit_heartbeat_results(
-                [],
-                heartbeat_output,
-                {
-                    "status": "stopped",
-                    "run_id": run_id,
-                    "observed_at": utc_now_iso(),
-                    "reason": "no_active_pairs",
-                },
-            )
-            break
+            run_id = str(uuid4())
+            if not active_pairs:
+                emit_heartbeat_results(
+                    [],
+                    heartbeat_output,
+                    {
+                        "status": "stopped",
+                        "run_id": run_id,
+                        "observed_at": utc_now_iso(),
+                        "reason": "no_active_pairs",
+                    },
+                )
+                break
 
-        batch_started = perf_counter()
-        batch_started_at = utc_now_iso()
-        refresh_flags = {
-            heartbeat_pair_key(pair): metadata_refresh_due(
-                metadata_cache.get(heartbeat_pair_key(pair)),
-                batch_started,
-                metadata_refresh_seconds,
-            )
-            for pair in active_pairs
-        }
-        timed_checks = await asyncio.gather(
-            *[
-                check_spread_concurrently(
-                    pair,
-                    kalshi_client,
-                    polymarket_client,
-                    max_venue_spread=max_venue_spread,
-                    min_buy_size=min_buy_size,
-                    min_depth_size=min_depth_size,
-                    depth_window=depth_window,
-                    min_edge=min_edge,
-                    min_fee_adjusted_edge=min_fee_adjusted_edge,
-                    fee_mode=fee_mode,
-                    polymarket_open_interest=metadata_cache.get(
-                        heartbeat_pair_key(pair),
-                        CachedPairMetadata(),
-                    ).open_interest,
-                    polymarket_volume=metadata_cache.get(
-                        heartbeat_pair_key(pair),
-                        CachedPairMetadata(),
-                    ).volume,
-                    refresh_metadata=refresh_flags[heartbeat_pair_key(pair)],
-                    run_id=run_id,
+            batch_started = perf_counter()
+            batch_started_at = utc_now_iso()
+            refresh_flags = {
+                heartbeat_pair_key(pair): metadata_refresh_due(
+                    metadata_cache.get(heartbeat_pair_key(pair)),
+                    batch_started,
+                    metadata_refresh_seconds,
                 )
                 for pair in active_pairs
-            ],
-            return_exceptions=True,
-        )
+            }
+            timed_checks = await asyncio.gather(
+                *[
+                    check_spread_concurrently(
+                        pair,
+                        kalshi_client,
+                        polymarket_client,
+                        max_venue_spread=max_venue_spread,
+                        min_buy_size=min_buy_size,
+                        min_depth_size=min_depth_size,
+                        depth_window=depth_window,
+                        min_edge=min_edge,
+                        min_fee_adjusted_edge=min_fee_adjusted_edge,
+                        fee_mode=fee_mode,
+                        polymarket_open_interest=metadata_cache.get(
+                            heartbeat_pair_key(pair),
+                            CachedPairMetadata(),
+                        ).open_interest,
+                        polymarket_volume=metadata_cache.get(
+                            heartbeat_pair_key(pair),
+                            CachedPairMetadata(),
+                        ).volume,
+                        refresh_metadata=refresh_flags[heartbeat_pair_key(pair)],
+                        run_id=run_id,
+                    )
+                    for pair in active_pairs
+                ],
+                return_exceptions=True,
+            )
 
-        iteration_results, dropped_pair_keys = await process_batch_results(
-            db_path=db_path,
-            pairs=active_pairs,
-            timed_checks=timed_checks,
-            run_id=run_id,
-            consecutive_failures=consecutive_failures,
-            drop_failed_pairs_after=drop_failed_pairs_after,
-            signal_lookback_minutes=signal_lookback_minutes,
-            min_mid_edge=min_mid_edge,
-            min_poly_mid_move=min_poly_mid_move,
-            min_poly_oi_delta=min_poly_oi_delta,
-            min_poly_volume_delta=min_poly_volume_delta,
-            max_kalshi_mid_move=max_kalshi_mid_move,
-            paper_exit_config=paper_exit_config,
-            paper_trade_log_path=paper_trade_log_path,
-            paper_pnl_log_path=paper_pnl_log_path,
-            metadata_cache=metadata_cache,
-            refresh_flags=refresh_flags,
-            refreshed_at=batch_started,
-        )
+            iteration_results, dropped_pair_keys = await process_batch_results(
+                db_path=db_path,
+                db_connection=db_connection,
+                pairs=active_pairs,
+                timed_checks=timed_checks,
+                run_id=run_id,
+                consecutive_failures=consecutive_failures,
+                drop_failed_pairs_after=drop_failed_pairs_after,
+                signal_lookback_minutes=signal_lookback_minutes,
+                min_mid_edge=min_mid_edge,
+                min_poly_mid_move=min_poly_mid_move,
+                min_poly_oi_delta=min_poly_oi_delta,
+                min_poly_volume_delta=min_poly_volume_delta,
+                max_kalshi_mid_move=max_kalshi_mid_move,
+                paper_exit_config=paper_exit_config,
+                paper_trade_log_path=paper_trade_log_path,
+                paper_pnl_log_path=paper_pnl_log_path,
+                metadata_cache=metadata_cache,
+                refresh_flags=refresh_flags,
+                refreshed_at=batch_started,
+                strategy_config=strategy_config,
+            )
 
-        if dropped_pair_keys:
-            active_pairs = [
-                pair for pair in active_pairs if heartbeat_pair_key(pair) not in dropped_pair_keys
-            ]
+            if dropped_pair_keys:
+                active_pairs = [
+                    pair for pair in active_pairs if heartbeat_pair_key(pair) not in dropped_pair_keys
+                ]
 
-        batch_completed = perf_counter()
-        summary = format_heartbeat_summary(
-            iteration_results,
-            run_id=run_id,
-            observed_at=utc_now_iso(),
-            scheduler=scheduler,
-            output_mode=heartbeat_output,
-            active_pairs=len(active_pairs),
-            interval_seconds=interval_seconds,
-            batch_started_at=batch_started_at,
-            batch_duration_ms=Decimal(str((batch_completed - batch_started) * 1000)),
-            metadata_refresh_count=sum(1 for should_refresh in refresh_flags.values() if should_refresh),
-        )
-        emit_heartbeat_results(iteration_results, heartbeat_output, summary)
+            batch_completed = perf_counter()
+            summary = format_heartbeat_summary(
+                iteration_results,
+                run_id=run_id,
+                observed_at=utc_now_iso(),
+                scheduler=scheduler,
+                output_mode=heartbeat_output,
+                active_pairs=len(active_pairs),
+                interval_seconds=interval_seconds,
+                batch_started_at=batch_started_at,
+                batch_duration_ms=Decimal(str((batch_completed - batch_started) * 1000)),
+                metadata_refresh_count=sum(
+                    1 for should_refresh in refresh_flags.values() if should_refresh
+                ),
+            )
+            emit_heartbeat_results(iteration_results, heartbeat_output, summary)
 
-        iteration += 1
-        if scheduler == "sleep-after-batch" and (iterations == 0 or iteration < iterations):
-            await asyncio.sleep(interval)
+            iteration += 1
+            if scheduler == "sleep-after-batch" and (iterations == 0 or iteration < iterations):
+                await asyncio.sleep(interval)
+    finally:
+        db_connection.close()
 
     return 0
 
@@ -284,6 +315,7 @@ async def run_batch_heartbeat_async(
 async def process_batch_results(
     *,
     db_path: Path,
+    db_connection: sqlite3.Connection | None = None,
     pairs: list[MarketPair],
     timed_checks: list[TimedSpreadCheck | BaseException],
     run_id: str,
@@ -301,26 +333,33 @@ async def process_batch_results(
     metadata_cache: dict[str, CachedPairMetadata],
     refresh_flags: dict[str, bool],
     refreshed_at: float,
+    strategy_config: StrategyEngineConfig | None,
 ) -> tuple[list[dict[str, object]], set[str]]:
     successful_checks: list[TimedSpreadCheck] = []
     for timed_check in timed_checks:
         if not isinstance(timed_check, BaseException):
             successful_checks.append(timed_check)
 
-    save_results = await asyncio.to_thread(
-        save_observations,
-        db_path,
-        successful_checks,
-        signal_lookback_minutes=signal_lookback_minutes,
-        min_mid_edge=min_mid_edge,
-        min_poly_mid_move=min_poly_mid_move,
-        min_poly_oi_delta=min_poly_oi_delta,
-        min_poly_volume_delta=min_poly_volume_delta,
-        max_kalshi_mid_move=max_kalshi_mid_move,
-        paper_exit_config=paper_exit_config,
-        paper_trade_log_path=paper_trade_log_path,
-        paper_pnl_log_path=paper_pnl_log_path,
-    )
+    if successful_checks:
+        persistence = await asyncio.to_thread(
+            persist_heartbeat_checks,
+            db_path,
+            successful_checks,
+            db_connection=db_connection,
+            signal_lookback_minutes=signal_lookback_minutes,
+            min_mid_edge=min_mid_edge,
+            min_poly_mid_move=min_poly_mid_move,
+            min_poly_oi_delta=min_poly_oi_delta,
+            min_poly_volume_delta=min_poly_volume_delta,
+            max_kalshi_mid_move=max_kalshi_mid_move,
+            paper_exit_config=paper_exit_config,
+            paper_trade_log_path=paper_trade_log_path,
+            paper_pnl_log_path=paper_pnl_log_path,
+            strategy_config=strategy_config,
+        )
+        save_results = persistence.save_results
+    else:
+        save_results = []
     save_result_iter = iter(save_results)
     iteration_results: list[dict[str, object]] = []
     dropped_pair_keys: set[str] = set()
@@ -351,6 +390,107 @@ async def process_batch_results(
     return iteration_results, dropped_pair_keys
 
 
+def persist_heartbeat_checks(
+    db_path: Path,
+    successful_checks: list[TimedSpreadCheck],
+    *,
+    db_connection: sqlite3.Connection | None,
+    signal_lookback_minutes: int,
+    min_mid_edge: Decimal,
+    min_poly_mid_move: Decimal,
+    min_poly_oi_delta: Decimal,
+    min_poly_volume_delta: Decimal,
+    max_kalshi_mid_move: Decimal,
+    paper_exit_config: PaperExitConfig,
+    paper_trade_log_path: Path | None,
+    paper_pnl_log_path: Path | None,
+    strategy_config: StrategyEngineConfig | None,
+) -> HeartbeatPersistenceResult:
+    if db_connection is None:
+        initialize_database(db_path)
+        with connect_database(db_path) as connection:
+            return persist_heartbeat_checks_on_connection(
+                connection,
+                db_path,
+                successful_checks,
+                signal_lookback_minutes=signal_lookback_minutes,
+                min_mid_edge=min_mid_edge,
+                min_poly_mid_move=min_poly_mid_move,
+                min_poly_oi_delta=min_poly_oi_delta,
+                min_poly_volume_delta=min_poly_volume_delta,
+                max_kalshi_mid_move=max_kalshi_mid_move,
+                paper_exit_config=paper_exit_config,
+                paper_trade_log_path=paper_trade_log_path,
+                paper_pnl_log_path=paper_pnl_log_path,
+                strategy_config=strategy_config,
+            )
+    return persist_heartbeat_checks_on_connection(
+        db_connection,
+        db_path,
+        successful_checks,
+        signal_lookback_minutes=signal_lookback_minutes,
+        min_mid_edge=min_mid_edge,
+        min_poly_mid_move=min_poly_mid_move,
+        min_poly_oi_delta=min_poly_oi_delta,
+        min_poly_volume_delta=min_poly_volume_delta,
+        max_kalshi_mid_move=max_kalshi_mid_move,
+        paper_exit_config=paper_exit_config,
+        paper_trade_log_path=paper_trade_log_path,
+        paper_pnl_log_path=paper_pnl_log_path,
+        strategy_config=strategy_config,
+    )
+
+
+def persist_heartbeat_checks_on_connection(
+    connection: sqlite3.Connection,
+    db_path: Path,
+    successful_checks: list[TimedSpreadCheck],
+    *,
+    signal_lookback_minutes: int,
+    min_mid_edge: Decimal,
+    min_poly_mid_move: Decimal,
+    min_poly_oi_delta: Decimal,
+    min_poly_volume_delta: Decimal,
+    max_kalshi_mid_move: Decimal,
+    paper_exit_config: PaperExitConfig,
+    paper_trade_log_path: Path | None,
+    paper_pnl_log_path: Path | None,
+    strategy_config: StrategyEngineConfig | None,
+) -> HeartbeatPersistenceResult:
+    try:
+        save_results, legacy_trade_events = save_observations_on_connection(
+            connection,
+            successful_checks,
+            signal_lookback_minutes=signal_lookback_minutes,
+            min_mid_edge=min_mid_edge,
+            min_poly_mid_move=min_poly_mid_move,
+            min_poly_oi_delta=min_poly_oi_delta,
+            min_poly_volume_delta=min_poly_volume_delta,
+            max_kalshi_mid_move=max_kalshi_mid_move,
+            paper_exit_config=paper_exit_config,
+        )
+        strategy_recording = record_strategy_signals_on_connection(
+            connection,
+            successful_checks,
+            save_results,
+            config=strategy_config,
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+
+    trade_events = [*legacy_trade_events, *strategy_recording.paper_trade_events]
+    if trade_events and paper_trade_log_path is not None:
+        append_paper_trade_events(paper_trade_log_path, trade_events)
+        if paper_pnl_log_path is not None:
+            write_paper_pnl_snapshot(paper_pnl_log_path, db_path)
+    return HeartbeatPersistenceResult(
+        save_results=save_results,
+        strategy_recording=strategy_recording,
+    )
+
+
 async def run_per_market_heartbeat_async(
     *,
     pairs_path: Path,
@@ -376,48 +516,55 @@ async def run_per_market_heartbeat_async(
     paper_pnl_log_path: Path | None,
     heartbeat_output: HeartbeatOutputMode,
     metadata_refresh_seconds: Decimal,
+    strategy_config: StrategyEngineConfig | None,
 ) -> int:
     pairs = load_market_pairs(pairs_path)
     initialize_database(db_path)
+    db_connection = connect_database(db_path, check_same_thread=False)
     kalshi_client = KalshiClient(load_config())
     polymarket_client = PolymarketClient(load_polymarket_config())
     db_lock = asyncio.Lock()
     output_lock = asyncio.Lock()
-    tasks = [
-        asyncio.create_task(
-            run_market_heartbeat_loop(
-                pair,
-                db_path=db_path,
-                iterations=iterations,
-                interval_seconds=interval_seconds,
-                kalshi_client=kalshi_client,
-                polymarket_client=polymarket_client,
-                db_lock=db_lock,
-                output_lock=output_lock,
-                max_venue_spread=max_venue_spread,
-                min_buy_size=min_buy_size,
-                min_depth_size=min_depth_size,
-                depth_window=depth_window,
-                min_edge=min_edge,
-                min_fee_adjusted_edge=min_fee_adjusted_edge,
-                fee_mode=fee_mode,
-                signal_lookback_minutes=signal_lookback_minutes,
-                min_mid_edge=min_mid_edge,
-                min_poly_mid_move=min_poly_mid_move,
-                min_poly_oi_delta=min_poly_oi_delta,
-                min_poly_volume_delta=min_poly_volume_delta,
-                max_kalshi_mid_move=max_kalshi_mid_move,
-                paper_exit_config=paper_exit_config,
-                drop_failed_pairs_after=drop_failed_pairs_after,
-                paper_trade_log_path=paper_trade_log_path,
-                paper_pnl_log_path=paper_pnl_log_path,
-                heartbeat_output=heartbeat_output,
-                metadata_refresh_seconds=metadata_refresh_seconds,
+    try:
+        tasks = [
+            asyncio.create_task(
+                run_market_heartbeat_loop(
+                    pair,
+                    db_path=db_path,
+                    db_connection=db_connection,
+                    iterations=iterations,
+                    interval_seconds=interval_seconds,
+                    kalshi_client=kalshi_client,
+                    polymarket_client=polymarket_client,
+                    db_lock=db_lock,
+                    output_lock=output_lock,
+                    max_venue_spread=max_venue_spread,
+                    min_buy_size=min_buy_size,
+                    min_depth_size=min_depth_size,
+                    depth_window=depth_window,
+                    min_edge=min_edge,
+                    min_fee_adjusted_edge=min_fee_adjusted_edge,
+                    fee_mode=fee_mode,
+                    signal_lookback_minutes=signal_lookback_minutes,
+                    min_mid_edge=min_mid_edge,
+                    min_poly_mid_move=min_poly_mid_move,
+                    min_poly_oi_delta=min_poly_oi_delta,
+                    min_poly_volume_delta=min_poly_volume_delta,
+                    max_kalshi_mid_move=max_kalshi_mid_move,
+                    paper_exit_config=paper_exit_config,
+                    drop_failed_pairs_after=drop_failed_pairs_after,
+                    paper_trade_log_path=paper_trade_log_path,
+                    paper_pnl_log_path=paper_pnl_log_path,
+                    heartbeat_output=heartbeat_output,
+                    metadata_refresh_seconds=metadata_refresh_seconds,
+                    strategy_config=strategy_config,
+                )
             )
-        )
-        for pair in pairs
-    ]
-    await asyncio.gather(*tasks)
+            for pair in pairs
+        ]
+        await asyncio.gather(*tasks)
+    finally:
+        db_connection.close()
     return 0
 
 
@@ -425,6 +572,7 @@ async def run_market_heartbeat_loop(
     pair: MarketPair,
     *,
     db_path: Path,
+    db_connection: sqlite3.Connection,
     iterations: int,
     interval_seconds: Decimal,
     kalshi_client: KalshiClient,
@@ -450,6 +598,7 @@ async def run_market_heartbeat_loop(
     paper_pnl_log_path: Path | None,
     heartbeat_output: HeartbeatOutputMode,
     metadata_refresh_seconds: Decimal,
+    strategy_config: StrategyEngineConfig | None,
 ) -> None:
     metadata = CachedPairMetadata()
     consecutive_failures = 0
@@ -521,10 +670,11 @@ async def run_market_heartbeat_loop(
                 refreshed_at=started,
             )
         async with db_lock:
-            save_results = await asyncio.to_thread(
-                save_observations,
+            persistence = await asyncio.to_thread(
+                persist_heartbeat_checks,
                 db_path,
                 [timed_check],
+                db_connection=db_connection,
                 signal_lookback_minutes=signal_lookback_minutes,
                 min_mid_edge=min_mid_edge,
                 min_poly_mid_move=min_poly_mid_move,
@@ -534,7 +684,9 @@ async def run_market_heartbeat_loop(
                 paper_exit_config=paper_exit_config,
                 paper_trade_log_path=paper_trade_log_path,
                 paper_pnl_log_path=paper_pnl_log_path,
+                strategy_config=strategy_config,
             )
+        save_results = persistence.save_results
         results = [format_saved_timed_check(timed_check, save_results[0])]
         await emit_heartbeat_results_locked(
             results,
@@ -610,6 +762,8 @@ def format_heartbeat_summary(
         if result.get("status") not in {"failed", "dropped"}
     ]
     signal_count = sum(1 for result in successful if result.get("passes_filters") is True)
+    strategy_signal_count = sum_int_field(successful, "strategy_signal_count")
+    strategy_paper_trade_count = sum_int_field(successful, "strategy_paper_trade_count")
     return {
         "status": "heartbeat",
         "run_id": run_id,
@@ -625,6 +779,8 @@ def format_heartbeat_summary(
         "failure_count": len(failures),
         "dropped_count": len(drops),
         "signal_count": signal_count,
+        "strategy_signal_count": strategy_signal_count,
+        "strategy_paper_trade_count": strategy_paper_trade_count,
         "metadata_refresh_count": metadata_refresh_count,
         "max_raw_edge": max_decimal_string(results, "polymarket_minus_kalshi"),
         "max_fee_adjusted_edge": max_decimal_string(results, "fee_adjusted_edge"),
@@ -632,6 +788,19 @@ def format_heartbeat_summary(
         "avg_polymarket_latency_ms": average_decimal_string(results, "polymarket_latency_ms"),
         "avg_response_skew_ms": average_decimal_string(results, "response_skew_ms"),
     }
+
+
+def sum_int_field(results: list[dict[str, object]], key: str) -> int:
+    total = 0
+    for result in results:
+        value = result.get(key)
+        if isinstance(value, bool) or value is None:
+            continue
+        try:
+            total += int(value)
+        except (TypeError, ValueError):
+            continue
+    return total
 
 
 def metadata_refresh_due(

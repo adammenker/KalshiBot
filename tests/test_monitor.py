@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 import json
 import sqlite3
@@ -12,11 +13,12 @@ from kalshibot.cli import (
     format_heartbeat_failure,
     heartbeat_pair_key,
 )
-from kalshibot.commands.trading import heartbeat_interval_seconds
+from kalshibot.commands.trading import heartbeat_interval_seconds, heartbeat_strategy_config
 from kalshibot.monitoring.heartbeat import (
     CachedPairMetadata,
     format_heartbeat_summary,
     metadata_refresh_due,
+    process_batch_results,
 )
 from kalshibot.analysis import analyze_database
 from kalshibot.monitor import (
@@ -30,6 +32,7 @@ from kalshibot.monitoring.observations import save_observations
 from kalshibot.paper import PaperExitConfig
 from kalshibot.polymarket import PolymarketClient
 from kalshibot.spreads import MarketPair
+from kalshibot.strategies import StrategyEngineConfig
 
 
 def test_timestamp_delta_ms_compares_iso_timestamps() -> None:
@@ -134,6 +137,86 @@ def test_heartbeat_interval_accepts_decimal_seconds_and_milliseconds() -> None:
     ) == Decimal("0.5")
 
 
+def test_heartbeat_parser_accepts_strategy_variants_and_paper_trades() -> None:
+    args = build_parser().parse_args(
+        [
+            "heartbeat",
+            "--pairs",
+            "config/approved_market_pairs.json",
+            "--strategy-variants",
+            "legacy_fee_adjusted_edge,loose_poly_lead_scout",
+            "--strategy-paper-trades",
+            "legacy_fee_adjusted_edge",
+        ]
+    )
+    config = heartbeat_strategy_config(args.strategy_variants, args.strategy_paper_trades)
+
+    assert args.strategy_variants == "legacy_fee_adjusted_edge,loose_poly_lead_scout"
+    assert args.strategy_paper_trades == "legacy_fee_adjusted_edge"
+    assert config.enabled_strategy_ids == (
+        "legacy_fee_adjusted_edge",
+        "loose_poly_lead_scout",
+    )
+    assert config.paper_trade_strategy_ids == ("legacy_fee_adjusted_edge",)
+
+
+def test_heartbeat_strategy_config_scout_mode_enables_builtins() -> None:
+    args = build_parser().parse_args(
+        [
+            "heartbeat",
+            "--strategy-mode",
+            "scout",
+            "--strategy-paper-trades",
+            "hold_to_resolution_ev_poly_mid",
+        ]
+    )
+    config = heartbeat_strategy_config(
+        args.strategy_variants,
+        args.strategy_paper_trades,
+        strategy_mode=args.strategy_mode,
+    )
+
+    assert "legacy_fee_adjusted_edge" in config.enabled_strategy_ids
+    assert "loose_poly_lead_scout" in config.enabled_strategy_ids
+    assert "persistent_mid_gap" in config.enabled_strategy_ids
+    assert "hold_to_resolution_ev_poly_mid" in config.enabled_strategy_ids
+    assert "hold_to_resolution_ev_poly_bid_conservative" in config.enabled_strategy_ids
+    assert config.paper_trade_strategy_ids == ("hold_to_resolution_ev_poly_mid",)
+    assert config.strategy_mode == "scout"
+
+
+def test_heartbeat_strategy_config_loads_json_config(tmp_path) -> None:
+    config_path = tmp_path / "strategy_variants.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "strategy_mode": "off",
+                "variants": {
+                    "hold_to_resolution_ev_poly_mid": {
+                        "enabled": True,
+                        "paper_trade": True,
+                        "min_fee_adjusted_edge": "0.02",
+                    }
+                },
+            }
+        )
+    )
+
+    config = heartbeat_strategy_config("", "", strategy_config_path=config_path)
+
+    assert config.enabled_strategy_ids == ("hold_to_resolution_ev_poly_mid",)
+    assert config.paper_trade_strategy_ids == ("hold_to_resolution_ev_poly_mid",)
+    assert config.strategy_parameters == {
+        "hold_to_resolution_ev_poly_mid": {"min_fee_adjusted_edge": "0.02"}
+    }
+
+
+def test_analyze_parser_accepts_strategy_signal_limit() -> None:
+    args = build_parser().parse_args(["analyze", "--strategy-signal-limit", "3"])
+
+    assert args.strategy_signal_limit == 3
+
+
 def test_heartbeat_parser_accepts_entry_only_fee_mode() -> None:
     default_args = build_parser().parse_args(
         [
@@ -209,6 +292,8 @@ def test_format_heartbeat_summary_compacts_batch_results() -> None:
         [
             {
                 "passes_filters": True,
+                "strategy_signal_count": 4,
+                "strategy_paper_trade_count": 1,
                 "polymarket_minus_kalshi": "0.03",
                 "fee_adjusted_edge": "0.01",
                 "kalshi_latency_ms": "100",
@@ -241,6 +326,8 @@ def test_format_heartbeat_summary_compacts_batch_results() -> None:
     assert summary["failure_count"] == 1
     assert summary["dropped_count"] == 1
     assert summary["signal_count"] == 1
+    assert summary["strategy_signal_count"] == 4
+    assert summary["strategy_paper_trade_count"] == 1
     assert summary["max_raw_edge"] == "0.03"
     assert summary["avg_kalshi_latency_ms"] == "150.00"
     assert summary["avg_polymarket_latency_ms"] == "150.00"
@@ -623,6 +710,7 @@ def test_save_observation_writes_paper_trade_log_and_pnl_snapshot(tmp_path) -> N
         "exit_fee": "0.02",
         "fee_adjustment": "0.02",
         "fee_mode": "entry-only",
+        "fair_value_provider": None,
         "gross_pnl": "-0.0300",
         "hold_to_resolution_ev": "0.0050",
         "hold_to_resolution_fair_price": "0.485",
@@ -785,6 +873,278 @@ def test_save_observation_applies_mid_oi_volume_momentum_filters(tmp_path) -> No
     assert latest == (1, "", "0.050", "50", "400", "0.0000", "0.0800")
 
 
+def test_process_batch_results_records_enabled_strategy_signals(tmp_path) -> None:
+    db_path = tmp_path / "observations.sqlite"
+    timed_check = make_timed_check(
+        label="Strategy",
+        edge_setup="passing",
+        kalshi_response_received_at="2026-06-20T12:00:00.100000+00:00",
+        polymarket_response_received_at="2026-06-20T12:00:00.150000+00:00",
+        response_skew_ms=Decimal("50"),
+    )
+    pair = MarketPair(
+        label="Strategy",
+        kalshi_ticker="KXTEST-26-STRATEGY",
+        polymarket_token_id="token-Strategy",
+    )
+
+    results, dropped = asyncio.run(
+        process_batch_results(
+            db_path=db_path,
+            pairs=[pair],
+            timed_checks=[timed_check],
+            run_id="run-Strategy",
+            consecutive_failures={},
+            drop_failed_pairs_after=3,
+            signal_lookback_minutes=10,
+            min_mid_edge=Decimal("0"),
+            min_poly_mid_move=Decimal("0"),
+            min_poly_oi_delta=Decimal("0"),
+            min_poly_volume_delta=Decimal("0"),
+            max_kalshi_mid_move=Decimal("1"),
+            paper_exit_config=PaperExitConfig(),
+            paper_trade_log_path=None,
+            paper_pnl_log_path=None,
+            metadata_cache={},
+            refresh_flags={heartbeat_pair_key(pair): False},
+            refreshed_at=0,
+            strategy_config=StrategyEngineConfig(
+                enabled_strategy_ids=("legacy_fee_adjusted_edge",),
+            ),
+        )
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        signal = connection.execute(
+            """
+            SELECT strategy_id, strategy_version, signal_type, kalshi_ticker,
+                polymarket_token_id, edge, fee_adjusted_edge, reasons_json
+            FROM strategy_signals
+            """
+        ).fetchone()
+        paper_trade_count = connection.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0]
+    summary = analyze_database(db_path, strategy_signal_limit=1)
+
+    assert dropped == set()
+    assert results[0]["strategy_signal_count"] == 1
+    assert paper_trade_count == 1
+    assert signal == (
+        "legacy_fee_adjusted_edge",
+        "1",
+        "paper_open",
+        "KXTEST-26-STRATEGY",
+        "token-Strategy",
+        "0.0300",
+        "0.0100",
+        "[\"passes_existing_heartbeat_filters\"]",
+    )
+    assert summary["strategy_signals"]["signal_count"] == 1
+    assert summary["strategy_signals"]["signal_rate"] == "100.00%"
+    assert summary["strategy_signals"]["signal_type_counts"] == {"paper_open": 1}
+    assert summary["strategy_signals"]["reason_counts"] == {
+        "passes_existing_heartbeat_filters": 1
+    }
+    assert summary["strategy_signals"]["rejection_reason_counts"] == {}
+    assert summary["strategy_signals"]["strategies"] == [
+        {
+            "strategy_id": "legacy_fee_adjusted_edge",
+            "strategy_version": "1",
+            "signal_count": 1,
+            "signal_rate": "100.00%",
+            "signal_type_counts": {"paper_open": 1},
+            "reason_counts": {"passes_existing_heartbeat_filters": 1},
+            "rejection_reason_counts": {},
+            "first_signal_at": summary["strategy_signals"]["strategies"][0]["first_signal_at"],
+            "last_signal_at": summary["strategy_signals"]["strategies"][0]["last_signal_at"],
+            "score": {"average": None},
+            "confidence": {"average": "1.0000"},
+            "edge": {
+                "average": "0.0300",
+                "minimum": "0.0300",
+                "maximum": "0.0300",
+            },
+            "fee_adjusted_edge": {
+                "average": "0.0100",
+                "minimum": "0.0100",
+                "maximum": "0.0100",
+            },
+        }
+    ]
+    assert summary["strategy_signals"]["recent"][0] | {
+        "created_at": summary["strategy_signals"]["recent"][0]["created_at"],
+    } == {
+        "id": 1,
+        "observation_id": 1,
+        "run_id": "run-Strategy",
+        "observed_at": "2026-06-20T12:00:00.150000+00:00",
+        "created_at": summary["strategy_signals"]["recent"][0]["created_at"],
+        "strategy_id": "legacy_fee_adjusted_edge",
+        "strategy_version": "1",
+        "signal_type": "paper_open",
+        "label": "Strategy",
+        "outcome": "yes",
+        "kalshi_ticker": "KXTEST-26-STRATEGY",
+        "polymarket_token_id": "token-Strategy",
+        "side": "yes",
+        "direction": "buy_yes",
+        "score": None,
+        "confidence": "1",
+        "fair_value": "0.485",
+        "entry_price": "0.4600",
+        "mark_price": None,
+        "edge": "0.0300",
+        "fee_adjusted_edge": "0.0100",
+        "reasons": ["passes_existing_heartbeat_filters"],
+        "rejection_reasons": [],
+        "metadata": {
+            "fair_value_provider": "polymarket_mid",
+            "source": "existing_heartbeat_filters",
+        },
+    }
+
+
+def test_process_batch_results_opens_strategy_specific_paper_trade_when_enabled(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "observations.sqlite"
+    trade_log_path = tmp_path / "paper_trades.jsonl"
+    pnl_log_path = tmp_path / "paper_pnl.json"
+    timed_check = make_timed_check(
+        label="StrategyTrade",
+        edge_setup="passing",
+        kalshi_response_received_at="2026-06-20T12:00:00.100000+00:00",
+        polymarket_response_received_at="2026-06-20T12:00:00.150000+00:00",
+        response_skew_ms=Decimal("50"),
+    )
+    pair = MarketPair(
+        label="StrategyTrade",
+        kalshi_ticker="KXTEST-26-STRATEGYTRADE",
+        polymarket_token_id="token-StrategyTrade",
+    )
+
+    results, dropped = asyncio.run(
+        process_batch_results(
+            db_path=db_path,
+            pairs=[pair],
+            timed_checks=[timed_check],
+            run_id="run-StrategyTrade",
+            consecutive_failures={},
+            drop_failed_pairs_after=3,
+            signal_lookback_minutes=10,
+            min_mid_edge=Decimal("0"),
+            min_poly_mid_move=Decimal("0"),
+            min_poly_oi_delta=Decimal("0"),
+            min_poly_volume_delta=Decimal("0"),
+            max_kalshi_mid_move=Decimal("1"),
+            paper_exit_config=PaperExitConfig(),
+            paper_trade_log_path=trade_log_path,
+            paper_pnl_log_path=pnl_log_path,
+            metadata_cache={},
+            refresh_flags={heartbeat_pair_key(pair): False},
+            refreshed_at=0,
+            strategy_config=StrategyEngineConfig(
+                enabled_strategy_ids=("legacy_fee_adjusted_edge",),
+                paper_trade_strategy_ids=("legacy_fee_adjusted_edge",),
+            ),
+        )
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        trade_rows = connection.execute(
+            """
+            SELECT signal_id, strategy_signal_id, strategy_id, strategy_version,
+                fair_value_provider, entry_policy, exit_policy, side, direction,
+                status, observation_count
+            FROM paper_trades
+            ORDER BY id
+            """
+        ).fetchall()
+        mark_count = connection.execute("SELECT COUNT(*) FROM paper_trade_marks").fetchone()[0]
+    trade_events = [json.loads(line) for line in trade_log_path.read_text().splitlines()]
+    pnl_snapshot = json.loads(pnl_log_path.read_text())
+    summary = analyze_database(db_path, strategy_signal_limit=1)
+
+    assert dropped == set()
+    assert results[0]["strategy_signal_count"] == 1
+    assert results[0]["strategy_paper_trade_count"] == 1
+    assert trade_rows == [
+        (1, None, None, None, None, None, None, None, None, "open", 1),
+        (
+                None,
+                1,
+                "legacy_fee_adjusted_edge",
+                "1",
+                "polymarket_mid",
+                "paper_open_signal",
+            "heartbeat_paper_exit_config",
+            "yes",
+            "buy_yes",
+            "open",
+            1,
+        ),
+    ]
+    assert mark_count == 1
+    assert [event["event"] for event in trade_events] == ["open", "open"]
+    assert "strategy_id" not in trade_events[0]
+    assert trade_events[1]["strategy_id"] == "legacy_fee_adjusted_edge"
+    assert trade_events[1]["fair_value_provider"] == "polymarket_mid"
+    assert trade_events[1]["strategy_signal_id"] == 1
+    assert trade_events[1]["side"] == "yes"
+    assert trade_events[1]["direction"] == "buy_yes"
+    assert pnl_snapshot["trade_count"] == 2
+    assert summary["paper_trades"]["trade_count"] == 2
+    assert summary["paper_trades"]["by_strategy"] == [
+        {
+            "strategy_id": None,
+            "strategy_version": None,
+            "trade_count": 1,
+            "open_trade_count": 1,
+            "closed_trade_count": 0,
+            "average_latest_unrealized_pnl": "-0.0700",
+            "total_latest_unrealized_pnl": "-0.0700",
+            "average_latest_gross_unrealized_pnl": "-0.0300",
+            "total_latest_gross_unrealized_pnl": "-0.0300",
+            "average_latest_hold_to_resolution_ev": "0.0050",
+            "total_latest_hold_to_resolution_ev": "0.0050",
+            "total_entry_fees": "0.0200",
+            "total_latest_exit_fees": "0.0200",
+            "average_realized_pnl": None,
+            "total_realized_pnl": None,
+            "average_realized_gross_pnl": None,
+            "total_realized_gross_pnl": None,
+            "total_realized_exit_fees": None,
+            "best_unrealized_pnl": "-0.0700",
+            "worst_unrealized_pnl": "-0.0700",
+            "best_hold_to_resolution_ev": "0.0050",
+            "worst_hold_to_resolution_ev": "0.0050",
+        },
+        {
+            "strategy_id": "legacy_fee_adjusted_edge",
+            "strategy_version": "1",
+            "trade_count": 1,
+            "open_trade_count": 1,
+            "closed_trade_count": 0,
+            "average_latest_unrealized_pnl": "-0.0700",
+            "total_latest_unrealized_pnl": "-0.0700",
+            "average_latest_gross_unrealized_pnl": "-0.0300",
+            "total_latest_gross_unrealized_pnl": "-0.0300",
+            "average_latest_hold_to_resolution_ev": "0.0050",
+            "total_latest_hold_to_resolution_ev": "0.0050",
+            "total_entry_fees": "0.0200",
+            "total_latest_exit_fees": "0.0200",
+            "average_realized_pnl": None,
+            "total_realized_pnl": None,
+            "average_realized_gross_pnl": None,
+            "total_realized_gross_pnl": None,
+            "total_realized_exit_fees": None,
+            "best_unrealized_pnl": "-0.0700",
+            "worst_unrealized_pnl": "-0.0700",
+            "best_hold_to_resolution_ev": "0.0050",
+            "worst_hold_to_resolution_ev": "0.0050",
+        },
+    ]
+
+
 def test_analyze_database_summarizes_observations(tmp_path) -> None:
     db_path = tmp_path / "observations.sqlite"
     save_observation(
@@ -820,6 +1180,32 @@ def test_analyze_database_summarizes_observations(tmp_path) -> None:
         "average_latest_unrealized_pnl": "-0.0700",
         "best_hold_to_resolution_ev": "0.0050",
         "best_unrealized_pnl": "-0.0700",
+        "by_strategy": [
+            {
+                "strategy_id": None,
+                "strategy_version": None,
+                "trade_count": 1,
+                "open_trade_count": 1,
+                "closed_trade_count": 0,
+                "average_latest_unrealized_pnl": "-0.0700",
+                "total_latest_unrealized_pnl": "-0.0700",
+                "average_latest_gross_unrealized_pnl": "-0.0300",
+                "total_latest_gross_unrealized_pnl": "-0.0300",
+                "average_latest_hold_to_resolution_ev": "0.0050",
+                "total_latest_hold_to_resolution_ev": "0.0050",
+                "total_entry_fees": "0.0200",
+                "total_latest_exit_fees": "0.0200",
+                "average_realized_pnl": None,
+                "total_realized_pnl": None,
+                "average_realized_gross_pnl": None,
+                "total_realized_gross_pnl": None,
+                "total_realized_exit_fees": None,
+                "best_unrealized_pnl": "-0.0700",
+                "worst_unrealized_pnl": "-0.0700",
+                "best_hold_to_resolution_ev": "0.0050",
+                "worst_hold_to_resolution_ev": "0.0050",
+            }
+        ],
         "close_reason_counts": {},
         "closed_trade_count": 0,
         "open_trade_count": 1,

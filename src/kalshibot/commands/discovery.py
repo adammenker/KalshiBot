@@ -176,13 +176,13 @@ def add_discovery_parsers(subparsers: Any) -> None:
     discover_matches.add_argument(
         "--kalshi-limit",
         type=int,
-        default=5,
+        default=25,
         help="Kalshi markets to run discovery against after filters and optional size sorting",
     )
     discover_matches.add_argument(
         "--kalshi-fetch-limit",
         type=int,
-        default=100,
+        default=500,
         help="Kalshi markets per page fetched before local filters and optional size sorting, maximum 1000",
     )
     discover_matches.add_argument(
@@ -201,7 +201,7 @@ def add_discovery_parsers(subparsers: Any) -> None:
     discover_matches.add_argument(
         "--kalshi-pages",
         type=int,
-        default=1,
+        default=5,
         help="Maximum Kalshi market pages to pull",
     )
     discover_matches.add_argument(

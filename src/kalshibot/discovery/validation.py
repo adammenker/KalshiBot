@@ -42,8 +42,13 @@ MATCHUP_PATTERN = re.compile(
 )
 SUBGAME_SCOPE_PATTERN = re.compile(r"\b(?P<kind>map|set|game)\s*(?P<number>\d+)\b", re.IGNORECASE)
 PERIOD_SCOPE_PATTERN = re.compile(
-    r"\b(?P<number>1st|2nd|3rd|4th)\s+"
+    r"\b(?P<number>1st|2nd|3rd|4th|first|second|third|fourth)\s+"
     r"(?P<kind>quarter|half|period|inning)\b",
+    re.IGNORECASE,
+)
+EXACT_SCORE_SCOPE_PATTERN = re.compile(
+    r"\b(?:set\s+score\s+of|score\s+of|wins?)\s+"
+    r"(?P<score>\d+\s*[-\u2013]\s*\d+)\b",
     re.IGNORECASE,
 )
 KALSHI_CONTRACT_DATE_PATTERN = re.compile(
@@ -566,8 +571,8 @@ def game_winner_scope_mismatch(
         return False
     if market_type(polymarket_market.title) != "game_winner":
         return False
-    kalshi_scope = game_winner_scope(kalshi_market.title)
-    polymarket_scope = game_winner_scope(polymarket_market.market_question)
+    kalshi_scope = game_winner_scope(kalshi_market.full_title)
+    polymarket_scope = game_winner_scope(polymarket_market.title)
     return not game_winner_scopes_compatible(kalshi_scope, polymarket_scope)
 
 
@@ -627,6 +632,8 @@ def participant_terms_compatible(left: set[str], right: set[str]) -> bool:
 def game_winner_scope(text: str | None) -> tuple[str, str | None]:
     if not text:
         return ("full", None)
+    if match := EXACT_SCORE_SCOPE_PATTERN.search(text):
+        return ("exact_score", re.sub(r"\s+", "", match.group("score")).replace("\u2013", "-"))
     if match := SUBGAME_SCOPE_PATTERN.search(text):
         kind = normalized_subgame_kind(match.group("kind"))
         return (kind, match.group("number"))
@@ -643,7 +650,16 @@ def normalized_subgame_kind(kind: str) -> str:
 
 
 def ordinal_to_number(value: str) -> str:
-    return {"1st": "1", "2nd": "2", "3rd": "3", "4th": "4"}[value.lower()]
+    return {
+        "1st": "1",
+        "2nd": "2",
+        "3rd": "3",
+        "4th": "4",
+        "first": "1",
+        "second": "2",
+        "third": "3",
+        "fourth": "4",
+    }[value.lower()]
 
 
 def game_winner_scopes_compatible(

@@ -57,6 +57,7 @@ class PaperTradeLogEvent:
     entry_fee: Decimal
     exit_fee: Decimal | None
     fair_price: Decimal | None
+    fair_value_provider: str | None
     hold_to_resolution_ev: Decimal | None
     fee_mode: str
     fee_adjustment: Decimal
@@ -65,28 +66,53 @@ class PaperTradeLogEvent:
     close_reason: str | None = None
     kalshi_url: str = ""
     polymarket_url: str = ""
+    strategy_id: str | None = None
+    strategy_version: str | None = None
+    strategy_signal_id: int | None = None
+    side: str | None = None
+    direction: str | None = None
 
 
 def create_open_paper_trade(
     connection: sqlite3.Connection,
     *,
-    signal_id: int,
+    signal_id: int | None,
     observation_id: int,
     timed_check: Any,
+    strategy_signal_id: int | None = None,
+    strategy_id: str | None = None,
+    strategy_version: str | None = None,
+    fair_value_provider: str | None = None,
+    fair_value: Decimal | None = None,
+    entry_policy: str | None = None,
+    exit_policy: str | None = None,
+    side: str | None = None,
+    direction: str | None = None,
+    initial_observation_count: int = 0,
 ) -> PaperTradeLogEvent | None:
     check = timed_check.check
-    if open_paper_trade_exists(connection, check):
+    if open_paper_trade_exists(
+        connection,
+        check,
+        strategy_id=strategy_id,
+        strategy_version=strategy_version,
+        direction=direction,
+    ):
         return None
 
     snapshot = paper_trade_snapshot(
         check,
         entry_price=check.kalshi_buy_price,
         entry_fee=check.kalshi_entry_fee,
+        fair_value_provider=fair_value_provider,
+        fair_value=fair_value,
     )
     cursor = connection.execute(
         """
         INSERT INTO paper_trades (
-            signal_id, observation_id, run_id, opened_at, closed_at, status,
+            signal_id, strategy_signal_id, strategy_id, strategy_version,
+            fair_value_provider, entry_policy, exit_policy, side, direction,
+            observation_id, run_id, opened_at, closed_at, status,
             label, outcome, kalshi_ticker, polymarket_token_id,
             simulated_entry_venue, entry_price, entry_comparison_price, entry_edge,
             entry_fair_price, entry_hold_to_resolution_ev,
@@ -97,10 +123,18 @@ def create_open_paper_trade(
             latest_edge, best_unrealized_pnl, worst_unrealized_pnl,
             best_hold_to_resolution_ev, worst_hold_to_resolution_ev,
             observation_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             signal_id,
+            strategy_signal_id,
+            strategy_id,
+            strategy_version,
+            fair_value_provider,
+            entry_policy,
+            exit_policy,
+            side,
+            direction,
             observation_id,
             timed_check.run_id,
             timed_check.observed_at,
@@ -133,7 +167,7 @@ def create_open_paper_trade(
             optional_decimal_string(snapshot.pnl.net),
             optional_decimal_string(snapshot.hold_to_resolution_ev),
             optional_decimal_string(snapshot.hold_to_resolution_ev),
-            0,
+            initial_observation_count,
         ),
     )
     trade_id = int(cursor.lastrowid)
@@ -146,12 +180,54 @@ def create_open_paper_trade(
         sell_price=snapshot.mark_price,
         pnl=snapshot.pnl,
         close_reason=None,
+        fair_value_provider=fair_value_provider,
+        fair_value=fair_value,
+        strategy_id=strategy_id,
+        strategy_version=strategy_version,
+        strategy_signal_id=strategy_signal_id,
+        side=side,
+        direction=direction,
     )
 
 
-def open_paper_trade_exists(connection: sqlite3.Connection, check: SpreadCheck) -> bool:
-    row = connection.execute(
+def open_paper_trade_exists(
+    connection: sqlite3.Connection,
+    check: SpreadCheck,
+    *,
+    strategy_id: str | None = None,
+    strategy_version: str | None = None,
+    direction: str | None = None,
+) -> bool:
+    params: list[str | None] = [
+        check.label,
+        check.outcome,
+        check.kalshi_ticker,
+        check.polymarket_token_id,
+    ]
+    strategy_filter = "strategy_id IS NULL"
+    if strategy_id is not None:
+        strategy_filter = """
+            strategy_id = ?
+            AND (
+                (? IS NULL AND strategy_version IS NULL)
+                OR strategy_version = ?
+            )
+            AND (
+                (? IS NULL AND direction IS NULL)
+                OR direction = ?
+            )
         """
+        params.extend(
+            [
+                strategy_id,
+                strategy_version,
+                strategy_version,
+                direction,
+                direction,
+            ]
+        )
+    row = connection.execute(
+        f"""
         SELECT 1
         FROM paper_trades
         WHERE status = 'open'
@@ -159,9 +235,10 @@ def open_paper_trade_exists(connection: sqlite3.Connection, check: SpreadCheck) 
             AND outcome = ?
             AND kalshi_ticker = ?
             AND polymarket_token_id = ?
+            AND {strategy_filter}
         LIMIT 1
         """,
-        (check.label, check.outcome, check.kalshi_ticker, check.polymarket_token_id),
+        params,
     ).fetchone()
     return row is not None
 
@@ -217,6 +294,7 @@ def mark_open_paper_trade(
         entry_price=entry_price,
         quantity=quantity,
         entry_fee=entry_fee,
+        fair_value_provider=trade_row.get("fair_value_provider"),
     )
     best_pnl = best_decimal(trade_row["best_unrealized_pnl"], snapshot.pnl.net)
     worst_pnl = worst_decimal(trade_row["worst_unrealized_pnl"], snapshot.pnl.net)
@@ -312,6 +390,12 @@ def mark_open_paper_trade(
             sell_price=snapshot.mark_price,
             pnl=snapshot.pnl,
             close_reason=close_reason,
+            fair_value_provider=trade_row.get("fair_value_provider"),
+            strategy_id=trade_row.get("strategy_id"),
+            strategy_version=trade_row.get("strategy_version"),
+            strategy_signal_id=optional_int(trade_row.get("strategy_signal_id")),
+            side=trade_row.get("side"),
+            direction=trade_row.get("direction"),
         )
     return None
 
@@ -411,6 +495,8 @@ def paper_trade_snapshot(
     entry_price: Decimal,
     quantity: Decimal | None = None,
     entry_fee: Decimal | None = None,
+    fair_value_provider: str | None = None,
+    fair_value: Decimal | None = None,
 ) -> PaperTradeSnapshot:
     resolved_quantity = quantity or check.target_size
     pnl = paper_trade_pnl(
@@ -420,7 +506,11 @@ def paper_trade_snapshot(
         entry_fee=entry_fee if entry_fee is not None else check.kalshi_entry_fee,
         exit_fee=check.kalshi_exit_fee,
     )
-    fair_price = hold_to_resolution_fair_price(check)
+    fair_price = (
+        fair_value
+        if fair_value is not None
+        else hold_to_resolution_fair_price(check, fair_value_provider=fair_value_provider)
+    )
     return PaperTradeSnapshot(
         entry_price=entry_price,
         quantity=resolved_quantity,
@@ -436,7 +526,13 @@ def paper_trade_snapshot(
     )
 
 
-def hold_to_resolution_fair_price(check: SpreadCheck) -> Decimal | None:
+def hold_to_resolution_fair_price(
+    check: SpreadCheck,
+    *,
+    fair_value_provider: str | None = None,
+) -> Decimal | None:
+    if fair_value_provider == "polymarket_bid_conservative":
+        return check.polymarket_sell_price
     return check.polymarket_mid_price
 
 
@@ -472,9 +568,20 @@ def paper_trade_log_event(
     sell_price: Decimal | None,
     pnl: PaperPnl,
     close_reason: str | None,
+    fair_value_provider: str | None = None,
+    fair_value: Decimal | None = None,
+    strategy_id: str | None = None,
+    strategy_version: str | None = None,
+    strategy_signal_id: int | None = None,
+    side: str | None = None,
+    direction: str | None = None,
 ) -> PaperTradeLogEvent:
     check = timed_check.check
-    fair_price = hold_to_resolution_fair_price(check)
+    fair_price = (
+        fair_value
+        if fair_value is not None
+        else hold_to_resolution_fair_price(check, fair_value_provider=fair_value_provider)
+    )
     hold_ev = paper_hold_to_resolution_ev(
         entry_price=purchase_price,
         fair_price=fair_price,
@@ -498,6 +605,7 @@ def paper_trade_log_event(
         entry_fee=pnl.entry_fee,
         exit_fee=pnl.exit_fee,
         fair_price=fair_price,
+        fair_value_provider=fair_value_provider,
         hold_to_resolution_ev=hold_ev,
         fee_mode=check.fee_mode,
         fee_adjustment=check.fee_adjustment,
@@ -506,6 +614,11 @@ def paper_trade_log_event(
         close_reason=close_reason,
         kalshi_url=check.kalshi_url,
         polymarket_url=check.polymarket_url,
+        strategy_id=strategy_id,
+        strategy_version=strategy_version,
+        strategy_signal_id=strategy_signal_id,
+        side=side,
+        direction=direction,
     )
 
 
@@ -519,7 +632,7 @@ def append_paper_trade_events(path: Path, events: list[PaperTradeLogEvent]) -> N
 
 
 def format_paper_trade_log_event(event: PaperTradeLogEvent) -> dict[str, Any]:
-    return {
+    payload = {
         "event": event.event,
         "trade_id": event.trade_id,
         "observation_id": event.observation_id,
@@ -540,6 +653,7 @@ def format_paper_trade_log_event(event: PaperTradeLogEvent) -> dict[str, Any]:
         "hold_to_resolution_fair_price": str(event.fair_price)
         if event.fair_price is not None
         else None,
+        "fair_value_provider": event.fair_value_provider,
         "hold_to_resolution_ev": str(event.hold_to_resolution_ev)
         if event.hold_to_resolution_ev is not None
         else None,
@@ -549,6 +663,17 @@ def format_paper_trade_log_event(event: PaperTradeLogEvent) -> dict[str, Any]:
         "edge": str(event.edge),
         "close_reason": event.close_reason,
     }
+    if event.strategy_id is not None:
+        payload.update(
+            {
+                "strategy_id": event.strategy_id,
+                "strategy_version": event.strategy_version,
+                "strategy_signal_id": event.strategy_signal_id,
+                "side": event.side,
+                "direction": event.direction,
+            }
+        )
+    return payload
 
 
 def write_paper_pnl_snapshot(path: Path, db_path: Path) -> None:
@@ -570,7 +695,8 @@ def paper_pnl_snapshot(db_path: Path) -> dict[str, Any]:
         open_rows = connection.execute(
             """
             SELECT id, label, outcome, kalshi_ticker, polymarket_token_id,
-                entry_price, entry_fair_price, entry_hold_to_resolution_ev,
+                strategy_id, strategy_version, strategy_signal_id, side, direction,
+                fair_value_provider, entry_price, entry_fair_price, entry_hold_to_resolution_ev,
                 fee_mode, fee_adjustment, latest_mark_price, latest_unrealized_pnl,
                 latest_gross_unrealized_pnl, latest_fair_price,
                 latest_hold_to_resolution_ev, latest_edge, observation_count
@@ -635,6 +761,12 @@ def format_open_trade_row(row: sqlite3.Row) -> dict[str, Any]:
         "outcome": row["outcome"],
         "kalshi_ticker": row["kalshi_ticker"],
         "polymarket_token_id": row["polymarket_token_id"],
+        "strategy_id": row["strategy_id"],
+        "strategy_version": row["strategy_version"],
+        "strategy_signal_id": row["strategy_signal_id"],
+        "side": row["side"],
+        "direction": row["direction"],
+        "fair_value_provider": row["fair_value_provider"],
         "purchase_price": row["entry_price"],
         "entry_hold_to_resolution_fair_price": row["entry_fair_price"],
         "entry_hold_to_resolution_ev": row["entry_hold_to_resolution_ev"],
@@ -657,6 +789,10 @@ def optional_string_decimal(value: Any) -> str | None:
 
 def optional_decimal_string(value: Decimal | None) -> str | None:
     return str(value) if value is not None else None
+
+
+def optional_int(value: Any) -> int | None:
+    return int(value) if value is not None else None
 
 
 def sum_optional_decimals(values: Any) -> Decimal | None:

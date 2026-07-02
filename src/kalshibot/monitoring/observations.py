@@ -19,6 +19,7 @@ from kalshibot.monitoring.formatting import format_timed_spread_check
 from kalshibot.monitoring.models import TimedSpreadCheck
 from kalshibot.paper import (
     PaperExitConfig,
+    PaperTradeLogEvent,
     append_paper_trade_events,
     create_open_paper_trade,
     update_open_paper_trades,
@@ -30,6 +31,7 @@ from kalshibot.signals import (
     signal_filter_reasons,
 )
 from kalshibot.storage import initialize_database
+from kalshibot.storage import connect_database
 from kalshibot.utils import first_response_venue
 
 
@@ -84,29 +86,54 @@ def save_observations(
     paper_pnl_log_path: Path | None = None,
 ) -> list[ObservationSaveResult]:
     initialize_database(path)
-    results: list[ObservationSaveResult] = []
-    trade_events = []
-    with sqlite3.connect(path) as connection:
-        connection.row_factory = sqlite3.Row
-        for timed_check in timed_checks:
-            result, new_trade_events = save_observation_on_connection(
-                connection,
-                timed_check,
-                signal_lookback_minutes=signal_lookback_minutes,
-                min_mid_edge=min_mid_edge,
-                min_poly_mid_move=min_poly_mid_move,
-                min_poly_oi_delta=min_poly_oi_delta,
-                min_poly_volume_delta=min_poly_volume_delta,
-                max_kalshi_mid_move=max_kalshi_mid_move,
-                paper_exit_config=paper_exit_config,
-            )
-            results.append(result)
-            trade_events.extend(new_trade_events)
+    with connect_database(path) as connection:
+        results, trade_events = save_observations_on_connection(
+            connection,
+            timed_checks,
+            signal_lookback_minutes=signal_lookback_minutes,
+            min_mid_edge=min_mid_edge,
+            min_poly_mid_move=min_poly_mid_move,
+            min_poly_oi_delta=min_poly_oi_delta,
+            min_poly_volume_delta=min_poly_volume_delta,
+            max_kalshi_mid_move=max_kalshi_mid_move,
+            paper_exit_config=paper_exit_config,
+        )
     if trade_events and paper_trade_log_path is not None:
         append_paper_trade_events(paper_trade_log_path, trade_events)
         if paper_pnl_log_path is not None:
             write_paper_pnl_snapshot(paper_pnl_log_path, path)
     return results
+
+
+def save_observations_on_connection(
+    connection: sqlite3.Connection,
+    timed_checks: list[TimedSpreadCheck],
+    *,
+    signal_lookback_minutes: int = DEFAULT_SIGNAL_LOOKBACK_MINUTES,
+    min_mid_edge: Decimal = DEFAULT_MIN_MID_EDGE,
+    min_poly_mid_move: Decimal = DEFAULT_MIN_POLY_MID_MOVE,
+    min_poly_oi_delta: Decimal = DEFAULT_MIN_POLY_OI_DELTA,
+    min_poly_volume_delta: Decimal = DEFAULT_MIN_POLY_VOLUME_DELTA,
+    max_kalshi_mid_move: Decimal = DEFAULT_MAX_KALSHI_MID_MOVE,
+    paper_exit_config: PaperExitConfig | None = None,
+) -> tuple[list[ObservationSaveResult], list[PaperTradeLogEvent]]:
+    results: list[ObservationSaveResult] = []
+    trade_events: list[PaperTradeLogEvent] = []
+    for timed_check in timed_checks:
+        result, new_trade_events = save_observation_on_connection(
+            connection,
+            timed_check,
+            signal_lookback_minutes=signal_lookback_minutes,
+            min_mid_edge=min_mid_edge,
+            min_poly_mid_move=min_poly_mid_move,
+            min_poly_oi_delta=min_poly_oi_delta,
+            min_poly_volume_delta=min_poly_volume_delta,
+            max_kalshi_mid_move=max_kalshi_mid_move,
+            paper_exit_config=paper_exit_config,
+        )
+        results.append(result)
+        trade_events.extend(new_trade_events)
+    return results, trade_events
 
 
 def save_observation_on_connection(
