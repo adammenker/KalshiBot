@@ -29,7 +29,13 @@ from kalshibot.monitor import (
     timestamp_delta_ms,
 )
 from kalshibot.monitoring.observations import save_observations
-from kalshibot.paper import PaperExitConfig
+from kalshibot.paper import (
+    PaperExitConfig,
+    create_open_paper_trade,
+    paper_pnl_snapshot,
+)
+from kalshibot.paper.repository import create_open_paper_trade as repository_create_open_paper_trade
+from kalshibot.paper.reporting import paper_pnl_snapshot as reporting_paper_pnl_snapshot
 from kalshibot.polymarket import PolymarketClient
 from kalshibot.spreads import MarketPair
 from kalshibot.strategies import StrategyEngineConfig
@@ -40,6 +46,11 @@ def test_timestamp_delta_ms_compares_iso_timestamps() -> None:
         timestamp_delta_ms("2026-06-20T12:00:00+00:00", "2026-06-20T12:00:00.125000+00:00")
         == Decimal("125.000")
     )
+
+
+def test_paper_package_preserves_public_imports() -> None:
+    assert create_open_paper_trade is repository_create_open_paper_trade
+    assert paper_pnl_snapshot is reporting_paper_pnl_snapshot
 
 
 def test_first_response_venue_compares_receive_timestamps() -> None:
