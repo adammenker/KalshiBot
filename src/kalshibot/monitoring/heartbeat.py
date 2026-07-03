@@ -24,22 +24,21 @@ from kalshibot.defaults import (
     DEFAULT_SIGNAL_LOOKBACK_MINUTES,
 )
 from kalshibot.monitoring.fetch import check_spread_concurrently
-from kalshibot.monitoring.models import TimedSpreadCheck
 from kalshibot.monitoring.output import (
     HEARTBEAT_OUTPUT_MODES as HEARTBEAT_OUTPUT_MODES,
     HEARTBEAT_SCHEDULERS as HEARTBEAT_SCHEDULERS,
     HeartbeatOutputMode,
     HeartbeatScheduler,
-    emit_heartbeat_results,
-    emit_heartbeat_results_locked,
-    format_heartbeat_drop,
-    format_heartbeat_failure,
-    format_heartbeat_summary,
-    format_saved_timed_check,
-    heartbeat_pair_key,
+    emit_heartbeat_results as emit_heartbeat_results,
+    format_heartbeat_drop as format_heartbeat_drop,
+    format_heartbeat_failure as format_heartbeat_failure,
+    format_heartbeat_summary as format_heartbeat_summary,
+    heartbeat_pair_key as heartbeat_pair_key,
 )
-from kalshibot.monitoring.persistence import (
-    persist_heartbeat_checks,
+from kalshibot.monitoring.results import (
+    process_batch_results as process_batch_results,
+    process_single_market_failure,
+    process_single_market_success,
 )
 from kalshibot.monitoring.scheduling import (
     CachedPairMetadata as CachedPairMetadata,
@@ -292,84 +291,6 @@ async def run_batch_heartbeat_async(
     return 0
 
 
-async def process_batch_results(
-    *,
-    db_path: Path,
-    db_connection: sqlite3.Connection | None = None,
-    pairs: list[MarketPair],
-    timed_checks: list[TimedSpreadCheck | BaseException],
-    run_id: str,
-    consecutive_failures: dict[str, int],
-    drop_failed_pairs_after: int,
-    signal_lookback_minutes: int,
-    min_mid_edge: Decimal,
-    min_poly_mid_move: Decimal,
-    min_poly_oi_delta: Decimal,
-    min_poly_volume_delta: Decimal,
-    max_kalshi_mid_move: Decimal,
-    paper_exit_config: PaperExitConfig,
-    paper_trade_log_path: Path | None,
-    paper_pnl_log_path: Path | None,
-    metadata_cache: dict[str, CachedPairMetadata],
-    refresh_flags: dict[str, bool],
-    refreshed_at: float,
-    strategy_config: StrategyEngineConfig | None,
-) -> tuple[list[dict[str, object]], set[str]]:
-    successful_checks: list[TimedSpreadCheck] = []
-    for timed_check in timed_checks:
-        if not isinstance(timed_check, BaseException):
-            successful_checks.append(timed_check)
-
-    if successful_checks:
-        persistence = await asyncio.to_thread(
-            persist_heartbeat_checks,
-            db_path,
-            successful_checks,
-            db_connection=db_connection,
-            signal_lookback_minutes=signal_lookback_minutes,
-            min_mid_edge=min_mid_edge,
-            min_poly_mid_move=min_poly_mid_move,
-            min_poly_oi_delta=min_poly_oi_delta,
-            min_poly_volume_delta=min_poly_volume_delta,
-            max_kalshi_mid_move=max_kalshi_mid_move,
-            paper_exit_config=paper_exit_config,
-            paper_trade_log_path=paper_trade_log_path,
-            paper_pnl_log_path=paper_pnl_log_path,
-            strategy_config=strategy_config,
-        )
-        save_results = persistence.save_results
-    else:
-        save_results = []
-    save_result_iter = iter(save_results)
-    iteration_results: list[dict[str, object]] = []
-    dropped_pair_keys: set[str] = set()
-    for pair, timed_check in zip(pairs, timed_checks, strict=True):
-        pair_key = heartbeat_pair_key(pair)
-        if isinstance(timed_check, BaseException):
-            failure_count = consecutive_failures.get(pair_key, 0) + 1
-            consecutive_failures[pair_key] = failure_count
-            iteration_results.append(
-                format_heartbeat_failure(pair, run_id, timed_check, failure_count)
-            )
-            if drop_failed_pairs_after and failure_count >= drop_failed_pairs_after:
-                dropped_pair_keys.add(pair_key)
-                iteration_results.append(
-                    format_heartbeat_drop(pair, run_id, failure_count, drop_failed_pairs_after)
-                )
-            continue
-
-        consecutive_failures[pair_key] = 0
-        if refresh_flags.get(pair_key):
-            metadata_cache[pair_key] = CachedPairMetadata(
-                open_interest=timed_check.check.polymarket_open_interest,
-                volume=timed_check.check.polymarket_volume,
-                refreshed_at=refreshed_at,
-            )
-        iteration_results.append(format_saved_timed_check(timed_check, next(save_result_iter)))
-
-    return iteration_results, dropped_pair_keys
-
-
 async def run_per_market_heartbeat_async(
     *,
     pairs_path: Path,
@@ -512,29 +433,17 @@ async def run_market_heartbeat_loop(
             )
         except Exception as exc:
             consecutive_failures += 1
-            result = format_heartbeat_failure(pair, run_id, exc, consecutive_failures)
-            should_drop = drop_failed_pairs_after and consecutive_failures >= drop_failed_pairs_after
-            results = [result]
-            if should_drop:
-                results.append(
-                    format_heartbeat_drop(pair, run_id, consecutive_failures, drop_failed_pairs_after)
-                )
-            await emit_heartbeat_results_locked(
-                results,
-                heartbeat_output,
-                format_heartbeat_summary(
-                    results,
-                    run_id=run_id,
-                    observed_at=utc_now_iso(),
-                    scheduler="per-market",
-                    output_mode=heartbeat_output,
-                    active_pairs=1,
-                    interval_seconds=interval_seconds,
-                    batch_started_at=utc_now_iso(),
-                    batch_duration_ms=Decimal(str((perf_counter() - started) * 1000)),
-                    metadata_refresh_count=int(should_refresh),
-                ),
-                output_lock,
+            should_drop = await process_single_market_failure(
+                pair,
+                run_id=run_id,
+                exc=exc,
+                consecutive_failures=consecutive_failures,
+                drop_failed_pairs_after=drop_failed_pairs_after,
+                heartbeat_output=heartbeat_output,
+                interval_seconds=interval_seconds,
+                started_at=started,
+                metadata_refreshed=should_refresh,
+                output_lock=output_lock,
             )
             if should_drop:
                 return
@@ -542,47 +451,26 @@ async def run_market_heartbeat_loop(
             continue
 
         consecutive_failures = 0
-        if should_refresh:
-            metadata = CachedPairMetadata(
-                open_interest=timed_check.check.polymarket_open_interest,
-                volume=timed_check.check.polymarket_volume,
-                refreshed_at=started,
-            )
-        async with db_lock:
-            persistence = await asyncio.to_thread(
-                persist_heartbeat_checks,
-                db_path,
-                [timed_check],
-                db_connection=db_connection,
-                signal_lookback_minutes=signal_lookback_minutes,
-                min_mid_edge=min_mid_edge,
-                min_poly_mid_move=min_poly_mid_move,
-                min_poly_oi_delta=min_poly_oi_delta,
-                min_poly_volume_delta=min_poly_volume_delta,
-                max_kalshi_mid_move=max_kalshi_mid_move,
-                paper_exit_config=paper_exit_config,
-                paper_trade_log_path=paper_trade_log_path,
-                paper_pnl_log_path=paper_pnl_log_path,
-                strategy_config=strategy_config,
-            )
-        save_results = persistence.save_results
-        results = [format_saved_timed_check(timed_check, save_results[0])]
-        await emit_heartbeat_results_locked(
-            results,
-            heartbeat_output,
-            format_heartbeat_summary(
-                results,
-                run_id=run_id,
-                observed_at=utc_now_iso(),
-                scheduler="per-market",
-                output_mode=heartbeat_output,
-                active_pairs=1,
-                interval_seconds=interval_seconds,
-                batch_started_at=timed_check.comparison_started_at,
-                batch_duration_ms=Decimal(str((perf_counter() - started) * 1000)),
-                metadata_refresh_count=int(should_refresh),
-            ),
-            output_lock,
+        metadata = await process_single_market_success(
+            timed_check,
+            db_path=db_path,
+            db_connection=db_connection,
+            db_lock=db_lock,
+            output_lock=output_lock,
+            signal_lookback_minutes=signal_lookback_minutes,
+            min_mid_edge=min_mid_edge,
+            min_poly_mid_move=min_poly_mid_move,
+            min_poly_oi_delta=min_poly_oi_delta,
+            min_poly_volume_delta=min_poly_volume_delta,
+            max_kalshi_mid_move=max_kalshi_mid_move,
+            paper_exit_config=paper_exit_config,
+            paper_trade_log_path=paper_trade_log_path,
+            paper_pnl_log_path=paper_pnl_log_path,
+            strategy_config=strategy_config,
+            heartbeat_output=heartbeat_output,
+            interval_seconds=interval_seconds,
+            started_at=started,
+            metadata=metadata,
+            metadata_refreshed=should_refresh,
         )
         iteration += 1
-

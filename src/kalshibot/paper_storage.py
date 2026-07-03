@@ -175,6 +175,15 @@ def create_paper_trade_indexes(connection: sqlite3.Connection) -> None:
         ON paper_trades(strategy_signal_id)
         """
     )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_paper_trades_open_strategy_market
+        ON paper_trades(
+            status, strategy_id, strategy_version, label, outcome,
+            kalshi_ticker, polymarket_token_id, side, direction
+        )
+        """
+    )
 
 
 def ensure_column(

@@ -63,6 +63,7 @@ __all__ = [
     "StrategyMode",
     "StrategyRecordingResult",
     "StrategyRegistry",
+    "StrategyRunner",
     "StrategySignalType",
     "StrategyVariant",
     "UnknownStrategyError",
@@ -84,6 +85,7 @@ def __getattr__(name: str):
     if name in {
         "StrategyEvaluationResult",
         "StrategyRecordingResult",
+        "StrategyRunner",
         "record_strategy_signals_for_saved_observations",
         "record_strategy_signals_on_connection",
     }:

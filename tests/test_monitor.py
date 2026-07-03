@@ -18,8 +18,8 @@ from kalshibot.monitoring.heartbeat import (
     CachedPairMetadata,
     format_heartbeat_summary,
     metadata_refresh_due,
-    process_batch_results,
 )
+from kalshibot.monitoring.results import process_batch_results
 from kalshibot.analysis import analyze_database
 from kalshibot.monitor import (
     TimedSpreadCheck,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import sqlite3
 from dataclasses import dataclass, field
@@ -9,6 +10,7 @@ import pytest
 
 from kalshibot.spreads import SpreadCheck
 from kalshibot.storage import initialize_database
+import kalshibot.strategies.engine as strategy_engine_module
 from kalshibot.strategies import (
     DuplicateStrategyError,
     HoldToResolutionEvPolyBidConservativeStrategy,
@@ -24,7 +26,8 @@ from kalshibot.strategies import (
     list_strategy_signals,
     parse_enabled_strategy_ids,
 )
-from kalshibot.strategies.runner import record_strategy_signals_on_connection
+from kalshibot.strategies.paper_trading import StrategyPaperTradeService
+from kalshibot.strategies.runner import StrategyRunner, record_strategy_signals_on_connection
 
 
 @dataclass(frozen=True)
@@ -139,7 +142,17 @@ def test_hold_to_resolution_ev_respects_threshold() -> None:
     assert decision.reasons[0] == "positive_fair_value_edge"
 
 
-def test_strategy_engine_evaluates_without_db_side_effects(tmp_path) -> None:
+def test_strategy_engine_has_no_persistence_imports() -> None:
+    source = inspect.getsource(strategy_engine_module)
+
+    assert "sqlite3" not in source
+    assert "connect_database" not in source
+    assert "insert_strategy_signal" not in source
+    assert "create_open_paper_trade" not in source
+    assert "paper_storage" not in source
+
+
+def test_strategy_engine_evaluate_returns_decisions_without_db_side_effects(tmp_path) -> None:
     db_path = tmp_path / "observations.sqlite"
     initialize_database(db_path)
     engine = StrategyEngine(
@@ -147,7 +160,7 @@ def test_strategy_engine_evaluates_without_db_side_effects(tmp_path) -> None:
         config=StrategyEngineConfig(enabled_strategy_ids=("legacy_fee_adjusted_edge",)),
     )
 
-    decisions = engine.evaluate_safely(make_strategy_context())
+    decisions = engine.evaluate(make_strategy_context())
 
     with sqlite3.connect(db_path) as connection:
         signal_count = connection.execute("SELECT COUNT(*) FROM strategy_signals").fetchone()[0]
@@ -155,6 +168,30 @@ def test_strategy_engine_evaluates_without_db_side_effects(tmp_path) -> None:
 
     assert [decision.strategy_id for decision in decisions] == ["legacy_fee_adjusted_edge"]
     assert signal_count == 0
+    assert trade_count == 0
+
+
+def test_strategy_runner_inserts_strategy_signals(tmp_path) -> None:
+    db_path = tmp_path / "observations.sqlite"
+    initialize_database(db_path)
+    runner = StrategyRunner(
+        engine=StrategyEngine(
+            registry=StrategyRegistry([LegacyFeeAdjustedEdgeStrategy()]),
+            config=StrategyEngineConfig(enabled_strategy_ids=("legacy_fee_adjusted_edge",)),
+        ),
+        paper_trader=StrategyPaperTradeService(frozenset()),
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        results = runner.record_decisions(connection, make_strategy_context())
+        connection.commit()
+        signal_count = connection.execute("SELECT COUNT(*) FROM strategy_signals").fetchone()[0]
+        trade_count = connection.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0]
+
+    assert len(results) == 1
+    assert results[0].decision.strategy_id == "legacy_fee_adjusted_edge"
+    assert results[0].strategy_signal_id == 1
+    assert signal_count == 1
     assert trade_count == 0
 
 
@@ -220,6 +257,97 @@ def test_strategy_runner_opens_allowlisted_strategy_paper_trade(tmp_path) -> Non
         "yes",
         "buy_yes",
     )
+
+
+def test_allowlisted_strategies_open_separate_paper_trades_for_same_market(tmp_path) -> None:
+    db_path = tmp_path / "observations.sqlite"
+    initialize_database(db_path)
+    timed_check = FakeTimedCheck(check=make_spread_check())
+    save_result = FakeSaveResult()
+
+    with sqlite3.connect(db_path) as connection:
+        recording = record_strategy_signals_on_connection(
+            connection,
+            [timed_check],
+            [save_result],
+            config=StrategyEngineConfig(
+                enabled_strategy_ids=(
+                    "legacy_fee_adjusted_edge",
+                    "hold_to_resolution_ev_poly_mid",
+                ),
+                paper_trade_strategy_ids=(
+                    "legacy_fee_adjusted_edge",
+                    "hold_to_resolution_ev_poly_mid",
+                ),
+            ),
+        )
+        connection.commit()
+        trade_rows = connection.execute(
+            """
+            SELECT strategy_signal_id, strategy_id, strategy_version, side, direction
+            FROM paper_trades
+            ORDER BY id
+            """
+        ).fetchall()
+
+    assert recording.strategy_signal_ids == (1, 2)
+    assert len(recording.paper_trade_events) == 2
+    assert save_result.signal_fields["strategy_signal_count"] == 2
+    assert save_result.signal_fields["strategy_paper_trade_count"] == 2
+    assert trade_rows == [
+        (1, "legacy_fee_adjusted_edge", "1", "yes", "buy_yes"),
+        (2, "hold_to_resolution_ev_poly_mid", "1", "yes", "buy_yes"),
+    ]
+
+
+def test_same_strategy_does_not_duplicate_open_paper_trade_for_market_direction(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "observations.sqlite"
+    initialize_database(db_path)
+    timed_check = FakeTimedCheck(check=make_spread_check())
+    first_save_result = FakeSaveResult(observation_id=1)
+    second_save_result = FakeSaveResult(observation_id=2)
+    config = StrategyEngineConfig(
+        enabled_strategy_ids=("legacy_fee_adjusted_edge",),
+        paper_trade_strategy_ids=("legacy_fee_adjusted_edge",),
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        first_recording = record_strategy_signals_on_connection(
+            connection,
+            [timed_check],
+            [first_save_result],
+            config=config,
+        )
+        second_recording = record_strategy_signals_on_connection(
+            connection,
+            [timed_check],
+            [second_save_result],
+            config=config,
+        )
+        connection.commit()
+        signal_count = connection.execute("SELECT COUNT(*) FROM strategy_signals").fetchone()[0]
+        trade_rows = connection.execute(
+            """
+            SELECT strategy_signal_id, strategy_id, strategy_version, side, direction
+            FROM paper_trades
+            ORDER BY id
+            """
+        ).fetchall()
+
+    assert first_recording.strategy_signal_ids == (1,)
+    assert second_recording.strategy_signal_ids == (2,)
+    assert len(first_recording.paper_trade_events) == 1
+    assert second_recording.paper_trade_events == ()
+    assert first_save_result.signal_fields["strategy_signal_count"] == 1
+    assert first_save_result.signal_fields["strategy_paper_trade_count"] == 1
+    assert second_save_result.signal_fields["strategy_signal_count"] == 1
+    assert second_save_result.signal_fields["strategy_paper_trade_count"] == 0
+    assert signal_count == 2
+    assert trade_rows == [
+        (1, "legacy_fee_adjusted_edge", "1", "yes", "buy_yes"),
+    ]
 
 
 def test_strategy_signals_table_creation_and_migration(tmp_path) -> None:

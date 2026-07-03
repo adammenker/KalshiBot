@@ -44,8 +44,8 @@ from kalshibot.monitoring.heartbeat import (
     format_heartbeat_summary,
     heartbeat_pair_key,
     metadata_refresh_due,
-    process_batch_results,
 )
+from kalshibot.monitoring.results import process_batch_results
 from kalshibot.paper import PaperExitConfig
 from kalshibot.polymarket import PolymarketClient
 from kalshibot.runtime.active_pairs import (

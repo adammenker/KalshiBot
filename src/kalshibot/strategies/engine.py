@@ -8,6 +8,13 @@ from kalshibot.strategies.variants import default_strategy_variants
 
 
 class StrategyEngine:
+    """Pure strategy evaluator.
+
+    The engine owns variant selection and evaluation only. Persistence,
+    heartbeat context assembly, and paper trade opening belong to the runner
+    and paper-trading service layers.
+    """
+
     def __init__(
         self,
         registry: StrategyRegistry | None = None,

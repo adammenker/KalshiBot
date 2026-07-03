@@ -96,6 +96,7 @@ def create_open_paper_trade(
         check,
         strategy_id=strategy_id,
         strategy_version=strategy_version,
+        side=side,
         direction=direction,
     ):
         return None
@@ -196,6 +197,7 @@ def open_paper_trade_exists(
     *,
     strategy_id: str | None = None,
     strategy_version: str | None = None,
+    side: str | None = None,
     direction: str | None = None,
 ) -> bool:
     params: list[str | None] = [
@@ -213,6 +215,10 @@ def open_paper_trade_exists(
                 OR strategy_version = ?
             )
             AND (
+                (? IS NULL AND side IS NULL)
+                OR side = ?
+            )
+            AND (
                 (? IS NULL AND direction IS NULL)
                 OR direction = ?
             )
@@ -222,6 +228,8 @@ def open_paper_trade_exists(
                 strategy_id,
                 strategy_version,
                 strategy_version,
+                side,
+                side,
                 direction,
                 direction,
             ]
