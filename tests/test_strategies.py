@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 import pytest
@@ -13,8 +13,10 @@ from kalshibot.strategies import (
     DuplicateStrategyError,
     HoldToResolutionEvPolyBidConservativeStrategy,
     HoldToResolutionEvPolyMidStrategy,
+    LegacyFeeAdjustedEdgeStrategy,
     StrategyContext,
     StrategyDecision,
+    StrategyEngine,
     StrategyEngineConfig,
     StrategyRegistry,
     UnknownStrategyError,
@@ -22,6 +24,7 @@ from kalshibot.strategies import (
     list_strategy_signals,
     parse_enabled_strategy_ids,
 )
+from kalshibot.strategies.runner import record_strategy_signals_on_connection
 
 
 @dataclass(frozen=True)
@@ -41,30 +44,29 @@ class FakeStrategy:
 
 
 def test_strategy_model_creation() -> None:
-    with sqlite3.connect(":memory:") as connection:
-        context = make_strategy_context(connection)
-        decision = StrategyDecision(
-            strategy_id="poly_lead_scout",
-            strategy_version="1",
-            signal_type="shadow",
-            side="yes",
-            direction="buy_yes",
-            confidence=Decimal("0.70"),
-            score=Decimal("1.25"),
-            fair_value=Decimal("0.55"),
-            entry_price=Decimal("0.47"),
-            edge=Decimal("0.08"),
-            fee_adjusted_edge=Decimal("0.06"),
-            reasons=("poly_mid_up",),
-            rejection_reasons=("kalshi_depth_thin",),
-            metadata={"lookback_minutes": 10},
-        )
+    context = make_strategy_context()
+    decision = StrategyDecision(
+        strategy_id="poly_lead_scout",
+        strategy_version="1",
+        signal_type="shadow",
+        side="yes",
+        direction="buy_yes",
+        confidence=Decimal("0.70"),
+        score=Decimal("1.25"),
+        fair_value=Decimal("0.55"),
+        entry_price=Decimal("0.47"),
+        edge=Decimal("0.08"),
+        fee_adjusted_edge=Decimal("0.06"),
+        reasons=("poly_mid_up",),
+        rejection_reasons=("kalshi_depth_thin",),
+        metadata={"lookback_minutes": 10},
+    )
 
-        no_signal = StrategyDecision.none(
-            strategy_id="poly_lead_scout",
-            strategy_version="1",
-            rejection_reasons=("edge_missing",),
-        )
+    no_signal = StrategyDecision.none(
+        strategy_id="poly_lead_scout",
+        strategy_version="1",
+        rejection_reasons=("edge_missing",),
+    )
 
     assert context.config.enabled_strategy_ids == ("poly_lead_scout",)
     assert context.metrics["polymarket_mid_delta"] == "0.03"
@@ -93,9 +95,8 @@ def test_strategy_registry_resolves_enabled_ids_and_unknowns() -> None:
 
 
 def test_hold_to_resolution_ev_poly_mid_emits_paper_open_signal() -> None:
-    with sqlite3.connect(":memory:") as connection:
-        context = make_strategy_context(connection)
-        decision = HoldToResolutionEvPolyMidStrategy().evaluate(context)
+    context = make_strategy_context()
+    decision = HoldToResolutionEvPolyMidStrategy().evaluate(context)
 
     assert decision.signal_type == "paper_open"
     assert decision.strategy_id == "hold_to_resolution_ev_poly_mid"
@@ -109,9 +110,8 @@ def test_hold_to_resolution_ev_poly_mid_emits_paper_open_signal() -> None:
 
 
 def test_hold_to_resolution_ev_poly_bid_conservative_uses_polymarket_bid() -> None:
-    with sqlite3.connect(":memory:") as connection:
-        context = make_strategy_context(connection)
-        decision = HoldToResolutionEvPolyBidConservativeStrategy().evaluate(context)
+    context = make_strategy_context()
+    decision = HoldToResolutionEvPolyBidConservativeStrategy().evaluate(context)
 
     assert decision.signal_type == "shadow"
     assert decision.strategy_id == "hold_to_resolution_ev_poly_bid_conservative"
@@ -122,23 +122,104 @@ def test_hold_to_resolution_ev_poly_bid_conservative_uses_polymarket_bid() -> No
 
 
 def test_hold_to_resolution_ev_respects_threshold() -> None:
-    with sqlite3.connect(":memory:") as connection:
-        context = make_strategy_context(
-            connection,
-            config=StrategyEngineConfig(
-                enabled_strategy_ids=("hold_to_resolution_ev_poly_mid",),
-                strategy_parameters={
-                    "hold_to_resolution_ev_poly_mid": {
-                        "min_fee_adjusted_edge": "0.05",
-                    }
-                },
-            ),
-        )
-        decision = HoldToResolutionEvPolyMidStrategy().evaluate(context)
+    context = make_strategy_context(
+        config=StrategyEngineConfig(
+            enabled_strategy_ids=("hold_to_resolution_ev_poly_mid",),
+            strategy_parameters={
+                "hold_to_resolution_ev_poly_mid": {
+                    "min_fee_adjusted_edge": "0.05",
+                }
+            },
+        ),
+    )
+    decision = HoldToResolutionEvPolyMidStrategy().evaluate(context)
 
     assert decision.signal_type == "shadow"
     assert decision.rejection_reasons == ("hold_to_resolution_ev_below_threshold",)
     assert decision.reasons[0] == "positive_fair_value_edge"
+
+
+def test_strategy_engine_evaluates_without_db_side_effects(tmp_path) -> None:
+    db_path = tmp_path / "observations.sqlite"
+    initialize_database(db_path)
+    engine = StrategyEngine(
+        registry=StrategyRegistry([LegacyFeeAdjustedEdgeStrategy()]),
+        config=StrategyEngineConfig(enabled_strategy_ids=("legacy_fee_adjusted_edge",)),
+    )
+
+    decisions = engine.evaluate_safely(make_strategy_context())
+
+    with sqlite3.connect(db_path) as connection:
+        signal_count = connection.execute("SELECT COUNT(*) FROM strategy_signals").fetchone()[0]
+        trade_count = connection.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0]
+
+    assert [decision.strategy_id for decision in decisions] == ["legacy_fee_adjusted_edge"]
+    assert signal_count == 0
+    assert trade_count == 0
+
+
+def test_strategy_runner_records_signals_without_opening_unallowlisted_trades(tmp_path) -> None:
+    db_path = tmp_path / "observations.sqlite"
+    initialize_database(db_path)
+    timed_check = FakeTimedCheck(check=make_spread_check())
+    save_result = FakeSaveResult()
+
+    with sqlite3.connect(db_path) as connection:
+        recording = record_strategy_signals_on_connection(
+            connection,
+            [timed_check],
+            [save_result],
+            config=StrategyEngineConfig(enabled_strategy_ids=("legacy_fee_adjusted_edge",)),
+        )
+        connection.commit()
+        signal_count = connection.execute("SELECT COUNT(*) FROM strategy_signals").fetchone()[0]
+        trade_count = connection.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0]
+
+    assert recording.strategy_signal_ids == (1,)
+    assert recording.paper_trade_events == ()
+    assert save_result.signal_fields["strategy_signal_count"] == 1
+    assert save_result.signal_fields["strategy_paper_trade_count"] == 0
+    assert signal_count == 1
+    assert trade_count == 0
+
+
+def test_strategy_runner_opens_allowlisted_strategy_paper_trade(tmp_path) -> None:
+    db_path = tmp_path / "observations.sqlite"
+    initialize_database(db_path)
+    timed_check = FakeTimedCheck(check=make_spread_check())
+    save_result = FakeSaveResult()
+
+    with sqlite3.connect(db_path) as connection:
+        recording = record_strategy_signals_on_connection(
+            connection,
+            [timed_check],
+            [save_result],
+            config=StrategyEngineConfig(
+                enabled_strategy_ids=("legacy_fee_adjusted_edge",),
+                paper_trade_strategy_ids=("legacy_fee_adjusted_edge",),
+            ),
+        )
+        connection.commit()
+        trade = connection.execute(
+            """
+            SELECT strategy_signal_id, strategy_id, strategy_version, entry_policy,
+                side, direction
+            FROM paper_trades
+            """
+        ).fetchone()
+
+    assert recording.strategy_signal_ids == (1,)
+    assert len(recording.paper_trade_events) == 1
+    assert save_result.signal_fields["strategy_signal_count"] == 1
+    assert save_result.signal_fields["strategy_paper_trade_count"] == 1
+    assert trade == (
+        1,
+        "legacy_fee_adjusted_edge",
+        "1",
+        "paper_open_signal",
+        "yes",
+        "buy_yes",
+    )
 
 
 def test_strategy_signals_table_creation_and_migration(tmp_path) -> None:
@@ -273,7 +354,7 @@ def test_insert_and_list_strategy_signal(tmp_path) -> None:
     initialize_database(db_path)
 
     with sqlite3.connect(db_path) as connection:
-        context = make_strategy_context(connection)
+        context = make_strategy_context()
         decision = StrategyDecision(
             strategy_id="poly_lead_scout",
             strategy_version="1",
@@ -339,13 +420,8 @@ def test_insert_and_list_strategy_signal(tmp_path) -> None:
     assert json.loads(raw_json[2]) == {"lookback_minutes": 10, "threshold": "0.03"}
 
 
-def make_strategy_context(
-    connection: sqlite3.Connection,
-    *,
-    config: StrategyEngineConfig | None = None,
-) -> StrategyContext:
+def make_strategy_context(*, config: StrategyEngineConfig | None = None) -> StrategyContext:
     return StrategyContext(
-        connection=connection,
         run_id="run-1",
         observed_at="2026-07-02T12:00:00+00:00",
         observation_id=1,
@@ -359,6 +435,26 @@ def make_strategy_context(
         history=({"polymarket_mid_price": "0.50"},),
         config=config or StrategyEngineConfig(enabled_strategy_ids=("poly_lead_scout",)),
     )
+
+
+@dataclass
+class FakeSaveResult:
+    observation_id: int = 1
+    signal_fields: dict[str, object] = field(
+        default_factory=lambda: {
+            "polymarket_mid_delta": "0.03",
+            "kalshi_mid_delta": "0.00",
+            "polymarket_open_interest_delta": "25",
+            "polymarket_volume_delta": "100",
+        }
+    )
+
+
+@dataclass(frozen=True)
+class FakeTimedCheck:
+    check: SpreadCheck
+    run_id: str = "run-1"
+    observed_at: str = "2026-07-02T12:00:00+00:00"
 
 
 def make_spread_check() -> SpreadCheck:

@@ -6,10 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from kalshibot.commands.trading import (
-    STRATEGY_MODES,
     add_spread_filter_args,
     heartbeat_interval_seconds,
-    heartbeat_strategy_config,
 )
 from kalshibot.defaults import (
     DEFAULT_MAX_KALSHI_MID_MOVE,
@@ -27,6 +25,7 @@ from kalshibot.runtime.supervisor import (
     DynamicHeartbeatConfig,
     run_dynamic_bot_async,
 )
+from kalshibot.strategies import STRATEGY_MODES, strategy_engine_config_from_cli
 
 __all__ = ["add_runtime_parsers", "run_dynamic_bot"]
 
@@ -367,7 +366,7 @@ def run_dynamic_bot(args: Any) -> int:
             paper_pnl_log_path=None if args.no_paper_logs else args.paper_pnl_log,
             heartbeat_output=args.heartbeat_output,
             metadata_refresh_seconds=args.metadata_refresh_seconds,
-            strategy_config=heartbeat_strategy_config(
+            strategy_config=strategy_engine_config_from_cli(
                 args.strategy_variants,
                 args.strategy_paper_trades,
                 strategy_mode=args.strategy_mode,

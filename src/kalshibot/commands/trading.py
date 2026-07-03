@@ -45,13 +45,9 @@ from kalshibot.spreads import (
 )
 from kalshibot.strategies import (
     BUILT_IN_STRATEGY_IDS,
-    SCOUT_STRATEGY_IDS,
-    STRICT_STRATEGY_IDS,
-    StrategyEngineConfig,
-    parse_enabled_strategy_ids,
+    STRATEGY_MODES,
+    strategy_engine_config_from_cli,
 )
-
-STRATEGY_MODES = ("off", "scout", "strict")
 
 __all__ = [
     "add_trading_parsers",
@@ -420,7 +416,7 @@ def run_heartbeat(
             heartbeat_output=heartbeat_output,
             scheduler=scheduler,
             metadata_refresh_seconds=metadata_refresh_seconds,
-            strategy_config=heartbeat_strategy_config(
+            strategy_config=strategy_engine_config_from_cli(
                 strategy_variants,
                 strategy_paper_trades,
                 strategy_mode=strategy_mode,
@@ -430,77 +426,7 @@ def run_heartbeat(
     )
 
 
-def heartbeat_strategy_config(
-    strategy_variants: str,
-    strategy_paper_trades: str,
-    *,
-    strategy_mode: str | None = None,
-    strategy_config_path: Path | None = None,
-) -> StrategyEngineConfig:
-    file_mode, file_enabled_ids, file_paper_trade_ids, strategy_parameters = (
-        load_strategy_config(strategy_config_path)
-    )
-    resolved_mode = strategy_mode or file_mode or "off"
-    mode_enabled_ids = strategy_ids_for_mode(resolved_mode)
-    enabled_ids = parse_enabled_strategy_ids(
-        (*mode_enabled_ids, *file_enabled_ids, *parse_enabled_strategy_ids(strategy_variants))
-    )
-    paper_trade_ids = parse_enabled_strategy_ids(
-        (*file_paper_trade_ids, *parse_enabled_strategy_ids(strategy_paper_trades))
-    )
-    return StrategyEngineConfig(
-        enabled_strategy_ids=tuple(dict.fromkeys((*enabled_ids, *paper_trade_ids))),
-        paper_trade_strategy_ids=paper_trade_ids,
-        strategy_mode=resolved_mode,
-        strategy_parameters=strategy_parameters,
-    )
-
-
-def strategy_ids_for_mode(strategy_mode: str) -> tuple[str, ...]:
-    if strategy_mode == "scout":
-        return SCOUT_STRATEGY_IDS
-    if strategy_mode == "strict":
-        return STRICT_STRATEGY_IDS
-    if strategy_mode == "off":
-        return ()
-    raise ValueError(f"Unknown strategy mode: {strategy_mode}")
-
-
-def load_strategy_config(
-    path: Path | None,
-) -> tuple[str | None, tuple[str, ...], tuple[str, ...], dict[str, dict[str, object]]]:
-    if path is None:
-        return None, (), (), {}
-    payload = json.loads(path.read_text())
-    if not isinstance(payload, dict):
-        raise ValueError("Strategy config must be a JSON object")
-    variants = payload.get("variants") or {}
-    if not isinstance(variants, dict):
-        raise ValueError("Strategy config 'variants' must be an object")
-    enabled_ids: list[str] = []
-    paper_trade_ids: list[str] = []
-    parameters: dict[str, dict[str, object]] = {}
-    for strategy_id, raw_config in variants.items():
-        if not isinstance(raw_config, dict):
-            raise ValueError(f"Strategy config for {strategy_id} must be an object")
-        if raw_config.get("enabled") is True:
-            enabled_ids.append(str(strategy_id))
-        if raw_config.get("paper_trade") is True:
-            paper_trade_ids.append(str(strategy_id))
-        params = {
-            str(key): value
-            for key, value in raw_config.items()
-            if key not in {"enabled", "paper_trade"}
-        }
-        if params:
-            parameters[str(strategy_id)] = params
-    mode = payload.get("strategy_mode")
-    return (
-        str(mode) if mode is not None else None,
-        parse_enabled_strategy_ids(enabled_ids),
-        parse_enabled_strategy_ids(paper_trade_ids),
-        parameters,
-    )
+heartbeat_strategy_config = strategy_engine_config_from_cli
 
 
 def heartbeat_interval_seconds(interval_seconds: Decimal, interval_ms: Decimal | None) -> Decimal:

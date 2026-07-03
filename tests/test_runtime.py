@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 import json
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -94,11 +93,12 @@ def test_write_active_pairs_snapshot(tmp_path: Path) -> None:
     assert payload["markets"][0]["polymarket_token_id"] == "token-1"
 
 
-def test_initialize_database_creates_active_market_pairs_table(tmp_path: Path) -> None:
+def test_active_pair_storage_creates_active_market_pairs_table(tmp_path: Path) -> None:
     db_path = tmp_path / "observations.sqlite"
     initialize_database(db_path)
 
-    with sqlite3.connect(db_path) as connection:
+    with connect_database(db_path) as connection:
+        load_active_market_pairs(connection)
         table_count = connection.execute(
             """
             SELECT COUNT(*)

@@ -10,6 +10,65 @@ from kalshibot.strategies.context import StrategyContext
 from kalshibot.utils import utc_now_iso
 
 
+def create_strategy_signals_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS strategy_signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            observation_id INTEGER NOT NULL,
+            run_id TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            strategy_id TEXT NOT NULL,
+            strategy_version TEXT NOT NULL,
+            signal_type TEXT NOT NULL,
+            label TEXT,
+            outcome TEXT,
+            kalshi_ticker TEXT NOT NULL,
+            polymarket_token_id TEXT NOT NULL,
+            polymarket_condition_id TEXT,
+            side TEXT,
+            direction TEXT,
+            score TEXT,
+            confidence TEXT,
+            fair_value TEXT,
+            entry_price TEXT,
+            mark_price TEXT,
+            edge TEXT,
+            fee_adjusted_edge TEXT,
+            kalshi_buy_price TEXT,
+            kalshi_sell_price TEXT,
+            polymarket_buy_price TEXT,
+            polymarket_mid_price TEXT,
+            kalshi_mid_price TEXT,
+            polymarket_mid_minus_kalshi_mid TEXT,
+            polymarket_mid_delta TEXT,
+            kalshi_mid_delta TEXT,
+            polymarket_open_interest TEXT,
+            polymarket_open_interest_delta TEXT,
+            polymarket_volume TEXT,
+            polymarket_volume_delta TEXT,
+            reasons_json TEXT NOT NULL,
+            rejection_reasons_json TEXT NOT NULL,
+            metadata_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(observation_id) REFERENCES observations(id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_strategy_signals_observation_id
+        ON strategy_signals(observation_id)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_strategy_signals_strategy_id
+        ON strategy_signals(strategy_id)
+        """
+    )
+
+
 def insert_strategy_signal(
     connection: sqlite3.Connection,
     context: StrategyContext,
@@ -128,4 +187,3 @@ def decode_strategy_signal_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def decimal_string(value: Decimal | None) -> str | None:
     return str(value) if value is not None else None
-

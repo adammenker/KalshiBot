@@ -50,6 +50,7 @@ from kalshibot.paper import PaperExitConfig
 from kalshibot.polymarket import PolymarketClient
 from kalshibot.runtime.active_pairs import (
     active_pair_key,
+    create_active_market_pairs_table,
     load_active_market_pairs,
     mark_pair_inactive,
     market_pairs_from_payload,
@@ -130,6 +131,7 @@ class DynamicBotConfig:
 async def run_dynamic_bot_async(config: DynamicBotConfig) -> int:
     initialize_database(config.db_path)
     with connect_database(config.db_path) as connection:
+        create_active_market_pairs_table(connection)
         if config.clear_active_on_start:
             connection.execute("UPDATE active_market_pairs SET status = 'inactive_stale'")
         if config.seed_pairs_path is not None and config.seed_pairs_path.exists():
