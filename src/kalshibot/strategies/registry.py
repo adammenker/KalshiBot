@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from kalshibot.strategies.base import StrategyVariant
-from kalshibot.strategies.ids import parse_enabled_strategy_ids
+from kalshibot.strategies.ids import parse_enabled_strategy_ids as _parse_enabled_strategy_ids
 
 
 class UnknownStrategyError(ValueError):
@@ -36,7 +36,7 @@ class StrategyRegistry:
             raise UnknownStrategyError(f"Unknown strategy_id: {strategy_id}") from exc
 
     def resolve_enabled(self, strategy_ids: str | Iterable[str] | None) -> tuple[StrategyVariant, ...]:
-        return tuple(self.get(strategy_id) for strategy_id in parse_enabled_strategy_ids(strategy_ids))
+        return tuple(self.get(strategy_id) for strategy_id in _parse_enabled_strategy_ids(strategy_ids))
 
     def resolve_config(self, config: Any) -> tuple[StrategyVariant, ...]:
         return self.resolve_enabled(config.enabled_strategy_ids)

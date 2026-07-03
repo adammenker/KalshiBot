@@ -22,12 +22,12 @@ from kalshibot.strategies.ids import (
     PERSISTENT_MID_GAP_ID,
     SCOUT_STRATEGY_IDS,
     STRICT_STRATEGY_IDS,
+    parse_enabled_strategy_ids,
 )
 from kalshibot.strategies.registry import (
     DuplicateStrategyError,
     StrategyRegistry,
     UnknownStrategyError,
-    parse_enabled_strategy_ids,
 )
 from kalshibot.strategies.storage import insert_strategy_signal, list_strategy_signals
 from kalshibot.strategies.variants import (

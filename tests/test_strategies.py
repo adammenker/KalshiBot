@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as dataclass_fields
 from decimal import Decimal
 
 import pytest
@@ -46,6 +46,15 @@ class FakeStrategy:
         )
 
 
+@dataclass(frozen=True)
+class FailingStrategy:
+    strategy_id: str
+    strategy_version: str = "1"
+
+    def evaluate(self, context: StrategyContext) -> StrategyDecision:
+        raise RuntimeError("strategy failed")
+
+
 def test_strategy_model_creation() -> None:
     context = make_strategy_context()
     decision = StrategyDecision(
@@ -77,6 +86,10 @@ def test_strategy_model_creation() -> None:
     assert decision.reasons == ("poly_mid_up",)
     assert no_signal.signal_type == "none"
     assert no_signal.rejection_reasons == ("edge_missing",)
+
+
+def test_strategy_context_has_no_database_connection_field() -> None:
+    assert "connection" not in {field.name for field in dataclass_fields(StrategyContext)}
 
 
 def test_strategy_registry_resolves_enabled_ids_and_unknowns() -> None:
@@ -146,13 +159,22 @@ def test_strategy_engine_has_no_persistence_imports() -> None:
     source = inspect.getsource(strategy_engine_module)
 
     assert "sqlite3" not in source
+    assert "Path" not in source
     assert "connect_database" not in source
     assert "insert_strategy_signal" not in source
     assert "create_open_paper_trade" not in source
+    assert "PaperTradeLogEvent" not in source
     assert "paper_storage" not in source
+    assert "StrategyEvaluationResult" not in source
+    assert "StrategyRecordingResult" not in source
+    assert "record_strategy_signals" not in source
+    assert "strategy_context_from_saved_observation" not in source
+    assert "recent_observation_history" not in source
 
 
-def test_strategy_engine_evaluate_returns_decisions_without_db_side_effects(tmp_path) -> None:
+def test_strategy_engine_evaluate_safely_returns_decisions_without_db_side_effects(
+    tmp_path,
+) -> None:
     db_path = tmp_path / "observations.sqlite"
     initialize_database(db_path)
     engine = StrategyEngine(
@@ -160,7 +182,7 @@ def test_strategy_engine_evaluate_returns_decisions_without_db_side_effects(tmp_
         config=StrategyEngineConfig(enabled_strategy_ids=("legacy_fee_adjusted_edge",)),
     )
 
-    decisions = engine.evaluate(make_strategy_context())
+    decisions = engine.evaluate_safely(make_strategy_context())
 
     with sqlite3.connect(db_path) as connection:
         signal_count = connection.execute("SELECT COUNT(*) FROM strategy_signals").fetchone()[0]
@@ -169,6 +191,22 @@ def test_strategy_engine_evaluate_returns_decisions_without_db_side_effects(tmp_
     assert [decision.strategy_id for decision in decisions] == ["legacy_fee_adjusted_edge"]
     assert signal_count == 0
     assert trade_count == 0
+
+
+def test_strategy_engine_evaluate_safely_wraps_variant_errors() -> None:
+    engine = StrategyEngine(
+        registry=StrategyRegistry([FailingStrategy("broken")]),
+        config=StrategyEngineConfig(enabled_strategy_ids=("broken",)),
+    )
+
+    decisions = engine.evaluate_safely(make_strategy_context())
+
+    assert len(decisions) == 1
+    assert decisions[0].strategy_id == "broken"
+    assert decisions[0].signal_type == "shadow"
+    assert decisions[0].direction == "error"
+    assert decisions[0].rejection_reasons == ("RuntimeError",)
+    assert decisions[0].metadata == {"error": "strategy failed"}
 
 
 def test_strategy_runner_inserts_strategy_signals(tmp_path) -> None:
@@ -193,6 +231,46 @@ def test_strategy_runner_inserts_strategy_signals(tmp_path) -> None:
     assert results[0].strategy_signal_id == 1
     assert signal_count == 1
     assert trade_count == 0
+
+
+def test_strategy_paper_trade_service_respects_allowlist(tmp_path) -> None:
+    db_path = tmp_path / "observations.sqlite"
+    initialize_database(db_path)
+    timed_check = FakeTimedCheck(check=make_spread_check())
+    decision = StrategyDecision(
+        strategy_id="legacy_fee_adjusted_edge",
+        strategy_version="1",
+        signal_type="paper_open",
+        side="yes",
+        direction="buy_yes",
+        fair_value=Decimal("0.50"),
+        metadata={"fair_value_provider": "polymarket_mid"},
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        blocked_event = StrategyPaperTradeService(frozenset()).open_for_decision(
+            connection,
+            decision=decision,
+            strategy_signal_id=1,
+            observation_id=1,
+            timed_check=timed_check,
+        )
+        allowed_event = StrategyPaperTradeService(
+            frozenset({"legacy_fee_adjusted_edge"})
+        ).open_for_decision(
+            connection,
+            decision=decision,
+            strategy_signal_id=1,
+            observation_id=1,
+            timed_check=timed_check,
+        )
+        connection.commit()
+        trade_count = connection.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0]
+
+    assert blocked_event is None
+    assert allowed_event is not None
+    assert allowed_event.strategy_id == "legacy_fee_adjusted_edge"
+    assert trade_count == 1
 
 
 def test_strategy_runner_records_signals_without_opening_unallowlisted_trades(tmp_path) -> None:

@@ -144,18 +144,6 @@ def record_strategy_signals_on_connection(
     )
 
 
-def evaluate_and_record_strategy_decisions(
-    connection: sqlite3.Connection,
-    engine: StrategyEngine,
-    context: StrategyContext,
-) -> tuple[StrategyEvaluationResult, ...]:
-    runner = StrategyRunner(
-        engine=engine,
-        paper_trader=StrategyPaperTradeService(frozenset()),
-    )
-    return runner.record_decisions(connection, context)
-
-
 def strategy_context_from_saved_observation(
     connection: sqlite3.Connection,
     timed_check: Any,
